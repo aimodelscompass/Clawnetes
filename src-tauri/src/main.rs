@@ -42,6 +42,46 @@ struct PrereqCheck {
     openclaw_installed: bool,
 }
 
+fn authenticate_with_key(sess: &Session, user: &str, key_path: &std::path::Path) -> Result<(), String> {
+    // Strategy 1: Try with None for public key (modern libssh2 often handles this)
+    if sess.userauth_pubkey_file(user, None, key_path, None).is_ok() {
+        return Ok(());
+    }
+
+    // Strategy 2: Try with an explicit .pub file if it exists
+    let mut pubkey_path = key_path.to_path_buf();
+    pubkey_path.set_extension("pub");
+    if pubkey_path.exists() {
+        if sess.userauth_pubkey_file(user, Some(&pubkey_path), key_path, None).is_ok() {
+            return Ok(());
+        }
+    }
+
+    // Strategy 3: Try generating the public key on the fly using ssh-keygen
+    let output = Command::new("ssh-keygen")
+        .args(["-y", "-P", "", "-f", &key_path.to_string_lossy()])
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            let pubkey_content = String::from_utf8_lossy(&out.stdout);
+            let temp_dir = std::env::temp_dir();
+            let temp_pubkey = temp_dir.join(format!("temp_ssh_key_{}.pub", rand::random::<u32>()));
+            
+            if fs::write(&temp_pubkey, pubkey_content.as_bytes()).is_ok() {
+                let res = sess.userauth_pubkey_file(user, Some(&temp_pubkey), key_path, None);
+                let _ = fs::remove_file(temp_pubkey);
+                if res.is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // If all failed, return a informative error
+    Err("Key authentication failed. libssh2 reported an error. Please ensure the key is a valid OpenSSH format, matches the remote user, and is not passphrase-protected.".to_string())
+}
+
 #[command]
 async fn test_ssh_connection(ip: String, user: String, password: Option<String>, private_key_path: Option<String>) -> Result<String, String> {
     use std::net::ToSocketAddrs;
@@ -69,13 +109,13 @@ async fn test_ssh_connection(ip: String, user: String, password: Option<String>,
     // Try provided private key path if it exists
     if let Some(ref path) = private_key_path {
         let key_path = std::path::Path::new(path);
-        if key_path.exists() {
-            if sess.userauth_pubkey_file(&user, None, key_path, None).is_ok() {
-                return Ok("connected_key".to_string());
-            } else {
-                return Err("Failed to authenticate with the provided private key.".to_string());
-            }
+        if !key_path.exists() {
+            return Err(format!("The provided private key file does not exist at: {}", path));
         }
+        
+        // Use the improved authentication helper
+        authenticate_with_key(&sess, &user, key_path)?;
+        return Ok("connected_key".to_string());
     }
 
     // Try with agent first
@@ -112,6 +152,7 @@ async fn test_ssh_connection(ip: String, user: String, password: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RemoteInfo {
     ip: String,
     user: String,
@@ -127,15 +168,16 @@ fn connect_ssh(remote: &RemoteInfo) -> Result<Session, String> {
     sess.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
 
     // 1. Try provided private key path if it exists
+    // If a key is explicitly provided, ONLY use that key and don't fallback
     if let Some(ref path) = remote.private_key_path {
         let key_path = std::path::Path::new(path);
-        if key_path.exists() {
-            if sess.userauth_pubkey_file(&remote.user, None, key_path, None).is_ok() {
-                return Ok(sess);
-            } else {
-                return Err("Failed to authenticate with the provided private key.".to_string());
-            }
+        if !key_path.exists() {
+            return Err(format!("The provided private key file does not exist at: {}", path));
         }
+
+        // Use the improved authentication helper - fail if it doesn't work
+        authenticate_with_key(&sess, &remote.user, key_path)?;
+        return Ok(sess);
     }
 
     // 2. Try SSH agent

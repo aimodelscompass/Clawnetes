@@ -128,7 +128,7 @@ function App() {
         }
       } else {
         // Remote check
-        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
+        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null };
         const res: any = await invoke("check_remote_prerequisites", { remote });
         setChecks({
           node: res.node_installed,
@@ -155,13 +155,13 @@ function App() {
     setSshStatus("checking");
     setSshError("");
     try {
-      const res: string = await invoke("test_ssh_connection", { 
-        ip: remoteIp, 
-        user: remoteUser, 
+      const res: string = await invoke("test_ssh_connection", {
+        ip: remoteIp,
+        user: remoteUser,
         password: remotePassword || null,
-        private_key_path: remotePrivateKeyPath || null
+        privateKeyPath: remotePrivateKeyPath || null
       });
-      
+
       if (res === "auth_required") {
         setSshStatus("requesting_password");
       } else {
@@ -181,7 +181,7 @@ function App() {
       if (setupLocation === "remote") {
         setProgress("Connecting and installing on remote server (this may take 2-3 minutes)...");
         setLogs("Starting remote setup...");
-        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
+        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null };
         const gatewayToken: string = await invoke("setup_remote_openclaw", {
           remote,
           config: {
@@ -286,7 +286,7 @@ function App() {
     try {
       await invoke("approve_pairing", { 
         code: pairingInput,
-        remote: setupLocation === "remote" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null } : null
+        remote: setupLocation === "remote" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null
       });
       setPairingStatus("✅ Success! Bot paired.");
       setPairingInput("");
@@ -301,7 +301,7 @@ function App() {
     setLogs(`Starting maintenance: ${action}...\n`);
     try {
       let res: string;
-      const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
+      const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null };
       
       if (setupLocation === "remote") {
         if (action === "repair") {
@@ -363,7 +363,7 @@ function App() {
     } else {
       setMaintenanceStatus("Establishing SSH tunnel...");
       try {
-        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
+        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null };
         await invoke("start_ssh_tunnel", {
           remote,
           localPort: 18789,
@@ -472,7 +472,7 @@ function App() {
                       if (setupLocation === "remote") {
                         try {
                           const token = await invoke("get_remote_gateway_token", {
-                            remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null }
+                            remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null }
                           });
                           open(`http://127.0.0.1:18789/?token=${token}`);
                         } catch (e) {
