@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { open } from "@tauri-apps/api/shell";
+import { open as openDialog } from "@tauri-apps/api/dialog";
 import "./App.css";
 
 function App() {
@@ -10,6 +11,7 @@ function App() {
   const [remoteIp, setRemoteIp] = useState("");
   const [remoteUser, setRemoteUser] = useState("");
   const [remotePassword, setRemotePassword] = useState("");
+  const [remotePrivateKeyPath, setRemotePrivateKeyPath] = useState("");
   const [sshStatus, setSshStatus] = useState<"idle" | "checking" | "requesting_password" | "success" | "error">("idle");
   const [sshError, setSshError] = useState("");
 
@@ -126,17 +128,14 @@ function App() {
         }
       } else {
         // Remote check
-        const res: any = await invoke("check_remote_prerequisites", {
-          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null }
-        });
+        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
+        const res: any = await invoke("check_remote_prerequisites", { remote });
         setChecks({
           node: res.node_installed,
           docker: res.docker_running,
           openclaw: res.openclaw_installed
         });
-        const version: string = await invoke("get_remote_openclaw_version", {
-          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null }
-        });
+        const version: string = await invoke("get_remote_openclaw_version", { remote });
         setOpenClawVersion(version);
 
         if (res.openclaw_installed) {
@@ -159,7 +158,8 @@ function App() {
       const res: string = await invoke("test_ssh_connection", { 
         ip: remoteIp, 
         user: remoteUser, 
-        password: remotePassword || null 
+        password: remotePassword || null,
+        private_key_path: remotePrivateKeyPath || null
       });
       
       if (res === "auth_required") {
@@ -181,8 +181,9 @@ function App() {
       if (setupLocation === "remote") {
         setProgress("Connecting and installing on remote server (this may take 2-3 minutes)...");
         setLogs("Starting remote setup...");
+        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
         const gatewayToken: string = await invoke("setup_remote_openclaw", {
-          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null },
+          remote,
           config: {
             provider,
             api_key: apiKey,
@@ -204,7 +205,7 @@ function App() {
 
         setProgress("Establishing SSH tunnel...");
         await invoke("start_ssh_tunnel", {
-          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null },
+          remote,
           localPort: 18789,
           remotePort: gatewayPort
         });
@@ -285,7 +286,7 @@ function App() {
     try {
       await invoke("approve_pairing", { 
         code: pairingInput,
-        remote: setupLocation === "remote" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null } : null
+        remote: setupLocation === "remote" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null } : null
       });
       setPairingStatus("✅ Success! Bot paired.");
       setPairingInput("");
@@ -300,7 +301,7 @@ function App() {
     setLogs(`Starting maintenance: ${action}...\n`);
     try {
       let res: string;
-      const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null };
+      const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
       
       if (setupLocation === "remote") {
         if (action === "repair") {
@@ -362,8 +363,9 @@ function App() {
     } else {
       setMaintenanceStatus("Establishing SSH tunnel...");
       try {
+        const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null };
         await invoke("start_ssh_tunnel", {
-          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null },
+          remote,
           localPort: 18789,
           remotePort: gatewayPort
         });
@@ -470,7 +472,7 @@ function App() {
                       if (setupLocation === "remote") {
                         try {
                           const token = await invoke("get_remote_gateway_token", {
-                            remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null }
+                            remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null, private_key_path: remotePrivateKeyPath || null }
                           });
                           open(`http://127.0.0.1:18789/?token=${token}`);
                         } catch (e) {
@@ -531,6 +533,29 @@ function App() {
                     value={remoteUser} 
                     onChange={(e) => setRemoteUser(e.target.value)} 
                   />
+                </div>
+
+                <div className="form-group">
+                  <label>Private SSH Key (Optional)</label>
+                  <div style={{display: "flex", gap: "10px"}}>
+                    <input 
+                      readOnly 
+                      placeholder="Default keys (~/.ssh/id_rsa) used if empty" 
+                      value={remotePrivateKeyPath} 
+                    />
+                    <button className="secondary" style={{padding: "0 1rem"}} onClick={async () => {
+                      const selected = await openDialog({
+                        multiple: false,
+                        filters: [{ name: "SSH Key", extensions: ["*", "pem", "key"] }]
+                      });
+                      if (selected && typeof selected === "string") {
+                        setRemotePrivateKeyPath(selected);
+                      }
+                    }}>Select</button>
+                    {remotePrivateKeyPath && (
+                      <button className="secondary" style={{padding: "0 1rem", color: "var(--error)"}} onClick={() => setRemotePrivateKeyPath("")}>X</button>
+                    )}
+                  </div>
                 </div>
                 
                 {sshStatus === "requesting_password" && (

@@ -43,7 +43,7 @@ struct PrereqCheck {
 }
 
 #[command]
-async fn test_ssh_connection(ip: String, user: String, password: Option<String>) -> Result<String, String> {
+async fn test_ssh_connection(ip: String, user: String, password: Option<String>, private_key_path: Option<String>) -> Result<String, String> {
     // 1. Check network connectivity (ping -c 1 -W 2)
     let ping_output = Command::new("ping")
         .args(["-c", "1", "-W", "2", &ip])
@@ -61,7 +61,19 @@ async fn test_ssh_connection(ip: String, user: String, password: Option<String>)
     sess.set_tcp_stream(tcp);
     sess.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
 
-    // Try with key first
+    // Try provided private key path if it exists
+    if let Some(ref path) = private_key_path {
+        let key_path = std::path::Path::new(path);
+        if key_path.exists() {
+            if sess.userauth_pubkey_file(&user, None, key_path, None).is_ok() {
+                return Ok("connected_key".to_string());
+            } else {
+                return Err("Failed to authenticate with the provided private key.".to_string());
+            }
+        }
+    }
+
+    // Try with agent first
     if let Ok(_) = sess.userauth_agent(&user) {
         return Ok("connected_key".to_string());
     }
@@ -99,6 +111,7 @@ struct RemoteInfo {
     ip: String,
     user: String,
     password: Option<String>,
+    private_key_path: Option<String>,
 }
 
 fn connect_ssh(remote: &RemoteInfo) -> Result<Session, String> {
@@ -108,12 +121,24 @@ fn connect_ssh(remote: &RemoteInfo) -> Result<Session, String> {
     sess.set_tcp_stream(tcp);
     sess.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
 
-    // Try agent
+    // 1. Try provided private key path if it exists
+    if let Some(ref path) = remote.private_key_path {
+        let key_path = std::path::Path::new(path);
+        if key_path.exists() {
+            if sess.userauth_pubkey_file(&remote.user, None, key_path, None).is_ok() {
+                return Ok(sess);
+            } else {
+                return Err("Failed to authenticate with the provided private key.".to_string());
+            }
+        }
+    }
+
+    // 2. Try SSH agent
     if sess.userauth_agent(&remote.user).is_ok() {
         return Ok(sess);
     }
 
-    // Try default keys
+    // 3. Try default keys
     if let Some(home) = dirs::home_dir() {
         let keys = [home.join(".ssh").join("id_rsa"), home.join(".ssh").join("id_ed25519")];
         for key in keys {
@@ -125,7 +150,7 @@ fn connect_ssh(remote: &RemoteInfo) -> Result<Session, String> {
         }
     }
 
-    // Try password
+    // 4. Try password
     if let Some(ref pw) = remote.password {
         if sess.userauth_password(&remote.user, pw).is_ok() {
             return Ok(sess);
@@ -287,6 +312,7 @@ fn start_ssh_tunnel(remote: RemoteInfo, local_port: u16, remote_port: u16) -> Re
         ip: remote.ip.clone(),
         user: remote.user.clone(),
         password: remote.password.clone(),
+        private_key_path: remote.private_key_path.clone(),
     };
 
     thread::spawn(move || {
@@ -306,6 +332,7 @@ fn start_ssh_tunnel(remote: RemoteInfo, local_port: u16, remote_port: u16) -> Re
                         ip: remote_clone.ip.clone(),
                         user: remote_clone.user.clone(),
                         password: remote_clone.password.clone(),
+                        private_key_path: remote_clone.private_key_path.clone(),
                     };
 
                     thread::spawn(move || {
