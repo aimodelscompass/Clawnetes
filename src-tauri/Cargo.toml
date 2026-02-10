@@ -16,6 +16,9 @@ dirs = "5.0"
 rand = "0.8"
 # Pin time to avoid rustc version issues
 time = "=0.3.36"
+ssh2 = "0.9"
+lazy_static = "1.4"
+reqwest = { version = "0.11", features = ["blocking"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

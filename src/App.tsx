@@ -356,23 +356,92 @@ function App() {
             agent_name: agentName,
             agent_vibe: agentVibe,
             telegram_token: telegramToken,
+            // Gateway settings
+            gateway_port: gatewayPort,
+            gateway_bind: gatewayBind,
+            gateway_auth_mode: gatewayAuthMode,
+            tailscale_mode: tailscaleMode,
+            // Runtime settings
+            node_manager: nodeManager,
+            skills: selectedSkills,
+            service_keys: serviceKeys,
+            // Advanced security settings
+            sandbox_mode: mode === "advanced" ? sandboxMode : null,
+            tools_mode: mode === "advanced" ? toolsMode : null,
+            allowed_tools: mode === "advanced" && toolsMode === "allowlist" ? allowedTools : null,
+            denied_tools: mode === "advanced" && toolsMode === "denylist" ? deniedTools : null,
+            // Fallback models
+            fallback_models: mode === "advanced" && enableFallbacks ? fallbackModels.filter(m => m) : null,
+            // Session management
+            heartbeat_mode: mode === "advanced" ? heartbeatMode : null,
+            idle_timeout_ms: mode === "advanced" && heartbeatMode === "idle" ? idleTimeoutMs : null,
+            // Workspace customization
             identity_md: mode === "advanced" && identityMd ? identityMd : null,
             user_md: mode === "advanced" && userMd ? userMd : null,
             soul_md: mode === "advanced" && soulMd ? soulMd : null,
+            // Multi-agent support
+            agents: enableMultiAgent ? agentConfigs.map(a => ({
+              id: a.id,
+              name: a.name,
+              model: a.model,
+              fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
+              skills: a.skills.length > 0 ? a.skills : null,
+              vibe: a.vibe,
+              identity_md: a.identityMd || null,
+              user_md: a.userMd || null,
+              soul_md: a.soulMd || null
+            })) : null
           }
         });
+
+        // Install skills on remote server
+        for (const skill of selectedSkills) {
+          setProgress(`Installing skill on remote: ${skill}...`);
+          setLogs(`Installing skill: ${skill}...`);
+          try {
+            await invoke("install_remote_skill", {
+              remote: remoteConfig,
+              name: skill
+            });
+          } catch (e) {
+            console.error(`Failed to install skill ${skill}:`, e);
+            setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
+          }
+        }
 
         setProgress("Establishing SSH tunnel...");
         setLogs("Creating SSH tunnel to remote gateway...");
         await invoke("start_ssh_tunnel", { remote: remoteConfig });
         setTunnelActive(true);
 
+        // Verify tunnel is working with HTTP connectivity test
+        setProgress("Verifying tunnel connectivity...");
+        try {
+          const tunnelWorking: boolean = await invoke("verify_tunnel_connectivity", {
+            remote: remoteConfig
+          });
+          if (!tunnelWorking) {
+            throw new Error("Tunnel established but HTTP connectivity test failed");
+          }
+        } catch (e) {
+          setProgress("");
+          setLogs("Error: Tunnel verification failed - " + e);
+          setError(true);
+          setTunnelActive(false);
+          setLoading(false);
+          return;
+        }
+
         setProgress("Finalizing setup...");
         const instruction: string = await invoke("generate_pairing_code");
         setPairingCode(instruction);
 
         // Get dashboard URL (tunneled)
-        setDashboardUrl("http://127.0.0.1:18789");
+        const url: string = await invoke("get_dashboard_url", {
+          isRemote: true,
+          remote: remoteConfig
+        });
+        setDashboardUrl(url);
 
         setProgress("");
         setStep(17);
@@ -472,7 +541,18 @@ function App() {
     if (!pairingInput) return;
     setPairingStatus("Verifying...");
     try {
-      await invoke("approve_pairing", { code: pairingInput });
+      const remoteConfig = targetEnvironment === "cloud" ? {
+        ip: remoteIp,
+        user: remoteUser,
+        password: remotePassword || null,
+        private_key_path: remotePrivateKeyPath || null
+      } : null;
+
+      await invoke("approve_pairing", {
+        code: pairingInput,
+        isRemote: targetEnvironment === "cloud",
+        remote: remoteConfig
+      });
       setPairingStatus("✅ Success! Bot paired.");
       setPairingInput("");
     } catch (e) {

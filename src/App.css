@@ -356,6 +356,74 @@ button:disabled {
   font-size: 1.25rem;
 }
 
+/* Workspace Tabs */
+.workspace-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-tabs .tab {
+  padding: 0.75rem 1.5rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.workspace-tabs .tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.workspace-tabs .tab:hover {
+  color: var(--text-main);
+}
+
+/* Markdown Editor */
+.markdown-editor {
+  width: 100%;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  color: var(--text-main);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 300px;
+}
+
+.markdown-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(255, 75, 43, 0.2);
+}
+
+/* Custom Skill Form */
+.custom-skill-form {
+  animation: fadeIn 0.4s ease-out;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.custom-skill-form .form-group:last-of-type {
+  margin-bottom: 1.5rem;
+}
+
+/* Animation for fade-in */
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
