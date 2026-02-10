@@ -681,34 +681,7 @@ fn start_gateway() -> Result<String, String> {
     }
 
     if let Some(old_config) = our_config {
-        let new_config = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-        let mut new_json: serde_json::Value = serde_json::from_str(&new_config)
-            .map_err(|e| format!("Failed to parse new config: {}", e))?;
-        let old_json: serde_json::Value = serde_json::from_str(&old_config)
-            .map_err(|e| format!("Failed to parse old config: {}", e))?;
-
-        if let Some(agents) = old_json.get("agents") {
-            new_json["agents"] = agents.clone();
-        }
-        if let Some(auth) = old_json.get("auth") {
-            new_json["auth"] = auth.clone();
-        }
-        if let Some(messages) = old_json.get("messages") {
-            new_json["messages"] = messages.clone();
-        }
-        if let Some(plugins) = old_json.get("plugins") {
-            new_json["plugins"] = plugins.clone();
-        }
-        if let Some(channels) = old_json.get("channels") {
-            new_json["channels"] = channels.clone();
-        }
-        if let Some(tools) = old_json.get("tools") {
-            new_json["tools"] = tools.clone();
-        }
-
-        let merged = serde_json::to_string_pretty(&new_json)
-            .map_err(|e| format!("Failed to serialize merged config: {}", e))?;
-        fs::write(&config_path, merged).map_err(|e| e.to_string())?;
+        fs::write(&config_path, old_config).map_err(|e| e.to_string())?;
     }
 
     let start_output = shell_command("openclaw gateway start")?;
