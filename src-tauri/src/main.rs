@@ -1070,6 +1070,9 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
     let gateway_auth_mode = config.gateway_auth_mode.unwrap_or_else(|| "token".to_string());
     let tailscale_mode = config.tailscale_mode.unwrap_or_else(|| "off".to_string());
 
+    // Get remote home directory
+    let remote_home = execute_ssh(&remote, "echo $HOME")?.trim().to_string();
+
     // Build complete config JSON with ALL sections
     let config_json = format!(r#"{{
   "messages": {{
@@ -1084,7 +1087,7 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
       "compaction": {{
         "mode": "safeguard"
       }},
-      "workspace": "$HOME/.openclaw/workspace",
+      "workspace": "{home}/.openclaw/workspace",
       "model": {{
         "primary": "{model}"{fallbacks}
       }},
@@ -1115,6 +1118,7 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
     }}
   }}{telegram}{sandbox}{tools}
 }}"#,
+        home = remote_home,
         model = config.model,
         fallbacks = fallbacks_section,
         heartbeat = heartbeat_section,
