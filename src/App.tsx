@@ -209,7 +209,7 @@ function App() {
     { id: 17, name: "Pairing" }
   ];
 
-  useEffect(() => { checkSystem(); }, []);
+  useEffect(() => { checkSystem(true); }, []);
 
   // Update default auth method when provider changes
   useEffect(() => {
@@ -964,12 +964,16 @@ function App() {
                 className="primary"
                 onClick={async () => {
                   if (targetEnvironment === "cloud") {
-                    await checkRemoteSystem(true);
-                    setStep(2);
+                    const redirected = await checkRemoteSystem(false);
+                    if (!redirected) {
+                      setStep(2);
+                    }
                   } else {
-                    // Local environment - check local system but skip auto-redirect to maintenance
-                    await checkSystem(true);
-                    setStep(2);
+                    // Local environment - check local system and redirect if installed
+                    const redirected = await checkSystem(false);
+                    if (!redirected) {
+                      setStep(2);
+                    }
                   }
                 }}
                 disabled={targetEnvironment === "cloud" && sshStatus !== "success"}
