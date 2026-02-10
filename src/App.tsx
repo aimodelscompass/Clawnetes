@@ -228,7 +228,7 @@ function App() {
     setWorkspaceModified(modified);
   }, [identityMd, userMd, soulMd, initialWorkspace]);
 
-  async function checkSystem() {
+  async function checkSystem(skipRedirect = false) {
     // Always check local system on initial load
     const res: any = await invoke("check_prerequisites");
     setChecks({
@@ -239,14 +239,14 @@ function App() {
     const version: string = await invoke("get_openclaw_version");
     setOpenClawVersion(version);
 
-    if (res.openclaw_installed) {
+    if (res.openclaw_installed && !skipRedirect) {
       setStep(0);
       return true; // Indicate that we're going to maintenance
     }
-    return false; // Continue with normal flow
+    return res.openclaw_installed; // Return installation status
   }
 
-  async function checkRemoteSystem() {
+  async function checkRemoteSystem(skipRedirect = false) {
     // Check remote system (called from Step 1 when cloud environment is selected)
     if (sshStatus === "success") {
       const res: any = await invoke("check_remote_prerequisites", {
@@ -272,12 +272,12 @@ function App() {
       });
       setOpenClawVersion(version);
 
-      // If OpenClaw is already installed remotely, go to maintenance screen
-      if (res.openclaw_installed) {
+      // If OpenClaw is already installed remotely, go to maintenance screen (unless skipping)
+      if (res.openclaw_installed && !skipRedirect) {
         setStep(0);
         return true; // Indicate that we're going to maintenance
       }
-      return false; // Continue with normal flow
+      return res.openclaw_installed; // Return installation status
     }
     return false;
   }
@@ -827,8 +827,8 @@ function App() {
                   style={{flex: 1}}
                   onClick={async () => {
                     if (selectedMaint === "reconfigure") {
-                      // Go directly to Configuration Mode, preserving environment settings
-                      setStep(4);
+                      // Go back to Environment Selection
+                      setStep(1);
                     } else if (selectedMaint === "uninstall") {
                       if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
                         handleMaintenanceAction("uninstall");
@@ -963,12 +963,12 @@ function App() {
               <button
                 className="primary"
                 onClick={async () => {
-                  const alreadyInstalled = targetEnvironment === "cloud"
-                    ? await checkRemoteSystem()
-                    : await checkSystem();
-
-                  // Only go to Step 2 if not already installed
-                  if (!alreadyInstalled) {
+                  if (targetEnvironment === "cloud") {
+                    await checkRemoteSystem(true);
+                    setStep(2);
+                  } else {
+                    // Local environment - check local system but skip auto-redirect to maintenance
+                    await checkSystem(true);
                     setStep(2);
                   }
                 }}
