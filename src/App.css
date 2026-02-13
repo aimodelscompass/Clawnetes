@@ -71,7 +71,7 @@ body {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
-  border-radius: 8px;
+  border-radius: 9999px;
   color: var(--text-muted);
   font-size: 0.85rem;
   font-weight: 500;
@@ -154,7 +154,7 @@ input, select, textarea {
   width: 100%;
   background-color: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 0.75rem 0.875rem;
   color: var(--text-main);
   font-size: 0.95rem;
@@ -185,7 +185,7 @@ button {
   align-items: center;
   justify-content: center;
   padding: 0.75rem 1.5rem;
-  border-radius: 8px;
+  border-radius: 9999px;
   font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
@@ -225,7 +225,7 @@ button:disabled {
   background-color: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.2);
   padding: 1.5rem;
-  border-radius: 12px;
+  border-radius: 16px;
   color: #fecaca;
   margin-bottom: 2rem;
 }
@@ -246,7 +246,7 @@ button:disabled {
   background-color: var(--bg-card);
   border: 1px solid var(--border);
   padding: 1.5rem;
-  border-radius: 12px;
+  border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -276,13 +276,14 @@ button:disabled {
   background-color: var(--bg-card);
   border: 1px solid var(--border);
   padding: 1rem;
-  border-radius: 10px;
+  border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .skill-card.active {
   border-color: var(--primary);
+  background-color: rgba(255, 75, 43, 0.05);
 }
 
 .skill-card .skill-name {
@@ -297,7 +298,7 @@ button:disabled {
 
 .logs-container {
   background-color: black;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 1rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.85rem;
@@ -390,7 +391,7 @@ button:disabled {
   width: 100%;
   background-color: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 1rem;
   color: var(--text-main);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -411,12 +412,98 @@ button:disabled {
   animation: fadeIn 0.4s ease-out;
   background-color: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 1.5rem;
 }
 
 .custom-skill-form .form-group:last-of-type {
   margin-bottom: 1.5rem;
+}
+
+/* Radio Card Grid */
+.radio-card-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.radio-card-grid.cols-1 {
+  grid-template-columns: 1fr;
+}
+
+.radio-card-grid.cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.radio-card-grid.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.radio-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.radio-card:hover {
+  border-color: var(--text-muted);
+}
+
+.radio-card.active {
+  border-color: var(--primary);
+  background-color: rgba(255, 75, 43, 0.05);
+}
+
+.radio-card-label {
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.radio-card-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* Welcome Page */
+.welcome-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+}
+
+.welcome-logo {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.welcome-title {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #FF4B2B 0%, #FF416C 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.welcome-text {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  max-width: 400px;
+  margin-bottom: 3rem;
+  line-height: 1.6;
 }
 
 /* Animation for fade-in */

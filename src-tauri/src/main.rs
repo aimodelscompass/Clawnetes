@@ -389,14 +389,14 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         match mode.as_str() {
             "allowlist" => {
                 if let Some(tools) = config.allowed_tools.as_ref() {
-                    format!(r#","allow": {}"#, serde_json::to_string(tools).unwrap())
+                    format!(r#""allow": {}"#, serde_json::to_string(tools).unwrap())
                 } else {
                     String::new()
                 }
             },
             "denylist" => {
                 if let Some(tools) = config.denied_tools.as_ref() {
-                    format!(r#","deny": {}"#, serde_json::to_string(tools).unwrap())
+                    format!(r#""deny": {}"#, serde_json::to_string(tools).unwrap())
                 } else {
                     String::new()
                 }
@@ -414,33 +414,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         String::new()
     };
 
-    let telegram_section = if let Some(ref token) = config.telegram_token {
-        if !token.is_empty() {
-            format!(r#",
-  "plugins": {{
-    "entries": {{
-      "telegram": {{
-        "enabled": true
-      }}
-    }}
-  }},
-  "channels": {{
-    "telegram": {{
-      "accounts": {{
-        "main": {{
-          "botToken": "{}",
-          "name": "Primary Bot",
-          "dmPolicy": "pairing"
-        }}
-      }}
-    }}
-  }}"#, token)
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
+    let telegram_section = String::new();
 
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.as_deref().unwrap_or("loopback");
@@ -594,6 +568,9 @@ Serve {}."#, config.user_name)
     if let Some(ref token) = config.telegram_token {
         if !token.is_empty() {
             let _ = shell_command("openclaw plugins enable telegram");
+            let _ = shell_command(&format!("openclaw config set channels.telegram.accounts.main.botToken {}", token));
+            let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy pairing");
+            let _ = shell_command("openclaw config set channels.telegram.accounts.main.name \"Primary Bot\"");
         }
     }
 
@@ -880,14 +857,14 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
         match mode.as_str() {
             "allowlist" => {
                 if let Some(tools) = config.allowed_tools.as_ref() {
-                    format!(r#","allow": {}"#, serde_json::to_string(tools).unwrap())
+                    format!(r#""allow": {}"#, serde_json::to_string(tools).unwrap())
                 } else {
                     String::new()
                 }
             },
             "denylist" => {
                 if let Some(tools) = config.denied_tools.as_ref() {
-                    format!(r#","deny": {}"#, serde_json::to_string(tools).unwrap())
+                    format!(r#""deny": {}"#, serde_json::to_string(tools).unwrap())
                 } else {
                     String::new()
                 }
@@ -905,33 +882,7 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
         String::new()
     };
 
-    let telegram_section = if let Some(ref token) = config.telegram_token {
-        if !token.is_empty() {
-            format!(r#",
-  "plugins": {{
-    "entries": {{
-      "telegram": {{
-        "enabled": true
-      }}
-    }}
-  }},
-  "channels": {{
-    "telegram": {{
-      "accounts": {{
-        "main": {{
-          "botToken": "{}",
-          "name": "Primary Bot",
-          "dmPolicy": "pairing"
-        }}
-      }}
-    }}
-  }}"#, token)
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
+    let telegram_section = String::new();
 
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.as_deref().unwrap_or("loopback");
@@ -1086,6 +1037,9 @@ Serve {}."#, config.user_name)
     if let Some(ref token) = config.telegram_token {
         if !token.is_empty() {
             let _ = execute_ssh(&remote, "openclaw plugins enable telegram");
+            let _ = execute_ssh(&remote, &format!("openclaw config set channels.telegram.accounts.main.botToken {}", token));
+            let _ = execute_ssh(&remote, "openclaw config set channels.telegram.accounts.main.dmPolicy pairing");
+            let _ = execute_ssh(&remote, "openclaw config set channels.telegram.accounts.main.name \"Primary Bot\"");
         }
     }
 

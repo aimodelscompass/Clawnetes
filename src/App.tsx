@@ -25,14 +25,14 @@ const MODELS_BY_PROVIDER: Record<string, Array<{ value: string; label: string }>
     { value: "amazon-bedrock/qwen.qwen3-235b-a22b-v1:0", label: "Qwen 3 235B" },
   ],
   "anthropic": [
+    { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+    { value: "anthropic/claude-haiku-4-5", label: "Claude Haiku 4.5" },
     { value: "anthropic/claude-3-7-sonnet-latest", label: "Claude 3.7 Sonnet (Latest)" },
     { value: "anthropic/claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet (2025-02-19)" },
     { value: "anthropic/claude-3-5-sonnet-latest", label: "Claude 3.5 Sonnet (Latest)" },
     { value: "anthropic/claude-3-5-haiku-latest", label: "Claude 3.5 Haiku (Latest)" },
-    { value: "anthropic/claude-haiku-4-5-latest", label: "Claude Haiku 4.5" },
-    { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
     { value: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5" },
-    { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
     { value: "anthropic/claude-3-opus-20240229", label: "Claude 3 Opus" },
     { value: "anthropic/claude-3-haiku-20240307", label: "Claude 3 Haiku" },
   ],
@@ -176,8 +176,94 @@ const MODELS_BY_PROVIDER: Record<string, Array<{ value: string; label: string }>
   ]
 };
 
+// Reusable Radio Card Component
+const PROVIDER_LOGOS: Record<string, string> = {
+  "anthropic": "/images/anthropic.svg",
+  "openai": "/images/openai.svg",
+  "google": "/images/google.svg",
+  "openrouter": "/images/oc_04.png",
+  "ollama": "/images/ollama.png",
+  "amazon-bedrock": "/images/aws.svg",
+  "azure-openai-responses": "/images/azure.svg",
+  "cerebras": "/images/cerebras.png",
+  "github-copilot": "/images/github.png",
+  "google-antigravity": "/images/google.svg",
+  "google-gemini-cli": "/images/google.svg",
+  "google-vertex": "/images/google.svg",
+  "groq": "/images/groq.png",
+  "huggingface": "/images/huggingface.svg",
+  "kimi-coding": "/images/moonshot.png",
+  "minimax": "/images/oc_16.png",
+  "mistral": "/images/mistral.png",
+  "openai-codex": "/images/openai.svg",
+  "opencode": "/images/oc_19.png",
+  "vercel-ai-gateway": "/images/vercel.png",
+  "xai": "/images/xai.svg",
+  "zai": "/images/zhipu.png"
+};
+
+function RadioCard({ 
+  options, 
+  value, 
+  onChange, 
+  columns = 2 
+}: { 
+  options: { value: string; label: string; description?: string; icon?: string }[]; 
+  value: string; 
+  onChange: (val: string) => void; 
+  columns?: 1 | 2 | 3 
+}) {
+  return (
+    <div className={`radio-card-grid cols-${columns}`}>
+      {options.map((opt) => (
+        <div
+          key={opt.value}
+          className={`radio-card ${value === opt.value ? "active" : ""}`}
+          onClick={() => onChange(opt.value)}
+        >
+          <div className="radio-card-label" style={{display: "flex", alignItems: "center"}}>
+            <div className={`radio-circle ${value === opt.value ? "checked" : ""}`} style={{
+              width: "18px",
+              height: "18px",
+              borderRadius: "50%",
+              border: `2px solid ${value === opt.value ? "var(--primary)" : "var(--text-muted)"}`,
+              backgroundColor: value === opt.value ? "var(--primary)" : "transparent",
+              marginRight: "10px",
+              flexShrink: 0
+            }} />
+            {opt.icon && (
+               <img 
+                 src={opt.icon} 
+                 alt="" 
+                 style={{
+                   width: "24px", 
+                   height: "24px", 
+                   marginRight: "10px", 
+                   borderRadius: "6px",
+                   objectFit: "contain",
+                   backgroundColor: "rgba(255,255,255,0.1)",
+                   padding: "2px"
+                 }} 
+               />
+            )}
+            <span style={{fontWeight: 600}}>{opt.label}</span>
+          </div>
+          {opt.description && (
+             <div className="radio-card-desc" style={{
+               paddingLeft: opt.icon ? "60px" : "28px", 
+               marginTop: "4px"
+             }}>
+               {opt.description}
+             </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function App() {
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0.5); // Start at Welcome page
   const [mode, setMode] = useState("basic"); // "basic" or "advanced"
   const [checks, setChecks] = useState({ node: false, docker: false, openclaw: false });
   const [loading, setLoading] = useState(false);
@@ -192,7 +278,7 @@ function App() {
   const [apiKey, setApiKey] = useState("");
   const [authMethod, setAuthMethod] = useState("token"); 
   const [provider, setProvider] = useState("anthropic");
-  const [model, setModel] = useState("anthropic/claude-3-7-sonnet-latest");
+  const [model, setModel] = useState("anthropic/claude-opus-4-6");
   const [telegramToken, setTelegramToken] = useState("");
   const [progress, setProgress] = useState("");
   const [dashboardUrl, setDashboardUrl] = useState("http://127.0.0.1:18789");
@@ -284,16 +370,60 @@ function App() {
   const [pairingStatus, setPairingStatus] = useState("");
 
   const availableSkills = [
-    { id: "github", name: "GitHub", desc: "Interact with GitHub using gh CLI" },
-    { id: "weather", name: "Weather", desc: "Get current weather and forecasts" },
-    { id: "openai-whisper", name: "Whisper", desc: "Local speech-to-text" },
-    { id: "apple-notes", name: "Apple Notes", desc: "Manage Apple Notes on macOS" },
-    { id: "things-mac", name: "Things", desc: "Manage Things 3 on macOS" },
-    { id: "coding-agent", name: "Coding Agent", desc: "Run Codex, Claude Code, etc." }
+    { id: "1password", name: "1Password", desc: "Set up and use 1Password CLI (op) for secrets management." },
+    { id: "apple-notes", name: "Apple Notes", desc: "Manage Apple Notes on macOS (create, view, edit, search)." },
+    { id: "apple-reminders", name: "Apple Reminders", desc: "Manage Apple Reminders on macOS (list, add, complete)." },
+    { id: "bear-notes", name: "Bear Notes", desc: "Create, search, and manage Bear notes via grizzly CLI." },
+    { id: "blogwatcher", name: "Blogwatcher", desc: "Monitor blogs and RSS/Atom feeds for updates." },
+    { id: "blucli", name: "BluOS", desc: "BluOS CLI for discovery, playback, and volume control." },
+    { id: "bluebubbles", name: "BlueBubbles", desc: "Send or manage iMessages via BlueBubbles.", requiresAuth: true, authPlaceholder: "Server URL & Password" },
+    { id: "camsnap", name: "CamSnap", desc: "Capture frames or clips from RTSP/ONVIF cameras." },
+    { id: "clawhub", name: "ClawHub", desc: "Search, install, update, and publish agent skills." },
+    { id: "coding-agent", name: "Coding Agent", desc: "Run Codex, Claude Code, or OpenCode programmatic agents." },
+    { id: "eightctl", name: "Eight Sleep", desc: "Control Eight Sleep pods (status, temperature, alarms)." },
+    { id: "gemini", name: "Gemini CLI", desc: "Gemini CLI for one-shot Q&A, summaries, and generation." },
+    { id: "gifgrep", name: "GifGrep", desc: "Search GIF providers, download results, and extract frames." },
+    { id: "github", name: "GitHub", desc: "Interact with GitHub using the gh CLI (issues, PRs, runs)." },
+    { id: "gog", name: "Google Workspace", desc: "CLI for Gmail, Calendar, Drive, Docs, Sheets, and Contacts." },
+    { id: "goplaces", name: "Google Places", desc: "Query Google Places API for search and details.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "healthcheck", name: "Healthcheck", desc: "Host security hardening and risk-tolerance configuration." },
+    { id: "himalaya", name: "Himalaya (Email)", desc: "CLI to manage emails via IMAP/SMTP." },
+    { id: "imsg", name: "iMessage", desc: "Native macOS iMessage/SMS CLI for chats and sending." },
+    { id: "local-places", name: "Local Places", desc: "Search for places via Google Places API proxy." },
+    { id: "mcporter", name: "MCPorter", desc: "List, configure, and call MCP servers/tools directly." },
+    { id: "model-usage", name: "Model Usage", desc: "Summarize per-model usage/cost for Codex or Claude." },
+    { id: "nano-banana-pro", name: "Nano Banana Pro", desc: "Generate or edit images via Gemini 3 Pro Image.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "nano-pdf", name: "Nano PDF", desc: "Edit PDFs with natural-language instructions." },
+    { id: "notion", name: "Notion", desc: "Create and manage Notion pages and databases.", requiresAuth: true, authPlaceholder: "Integration Token" },
+    { id: "obsidian", name: "Obsidian", desc: "Work with Obsidian vaults via obsidian-cli." },
+    { id: "openai-image-gen", name: "OpenAI Images", desc: "Batch-generate images via OpenAI Images API.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "openai-whisper", name: "Whisper (Local)", desc: "Local speech-to-text with the Whisper CLI (no API key)." },
+    { id: "openai-whisper-api", name: "Whisper API", desc: "Transcribe audio via OpenAI Audio API.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "openhue", name: "Philips Hue", desc: "Control Philips Hue lights/scenes via OpenHue CLI." },
+    { id: "oracle", name: "Oracle", desc: "Best practices for using the oracle CLI." },
+    { id: "ordercli", name: "OrderCLI", desc: "Foodora-only CLI for checking past/active orders." },
+    { id: "peekaboo", name: "Peekaboo", desc: "Capture and automate macOS UI." },
+    { id: "sag", name: "ElevenLabs TTS", desc: "ElevenLabs text-to-speech with mac-style say UX.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "session-logs", name: "Session Logs", desc: "Search and analyze your own session logs." },
+    { id: "sherpa-onnx-tts", name: "Sherpa ONNX TTS", desc: "Local text-to-speech via sherpa-onnx (offline)." },
+    { id: "skill-creator", name: "Skill Creator", desc: "Create or update AgentSkills." },
+    { id: "slack", name: "Slack", desc: "Control Slack (messages, reactions, pins).", requiresAuth: true, authPlaceholder: "Bot Token" },
+    { id: "songsee", name: "SongSee", desc: "Generate spectrograms and feature-panel visualizations." },
+    { id: "sonoscli", name: "Sonos", desc: "Control Sonos speakers (status, playback, volume)." },
+    { id: "spotify-player", name: "Spotify", desc: "Terminal Spotify playback/search via spogo." },
+    { id: "summarize", name: "Summarize", desc: "Summarize text/transcripts from URLs and files." },
+    { id: "things-mac", name: "Things 3", desc: "Manage Things 3 on macOS (add, list, search tasks)." },
+    { id: "tmux", name: "Tmux", desc: "Remote-control tmux sessions for interactive CLIs." },
+    { id: "trello", name: "Trello", desc: "Manage Trello boards, lists, and cards.", requiresAuth: true, authPlaceholder: "API Key & Token" },
+    { id: "video-frames", name: "Video Frames", desc: "Extract frames or short clips from videos." },
+    { id: "voice-call", name: "Voice Call", desc: "Start voice calls via the OpenClaw voice-call plugin." },
+    { id: "wacli", name: "WhatsApp", desc: "Send WhatsApp messages via wacli CLI." },
+    { id: "weather", name: "Weather", desc: "Get current weather and forecasts." }
   ];
 
   const stepsList = [
     { id: 0, name: "System State", hidden: true },
+    { id: 0.5, name: "Welcome", hidden: true },
     { id: 1, name: "Environment" },
     { id: 2, name: "System Check" },
     { id: 3, name: "Security" },
@@ -346,6 +476,8 @@ function App() {
     if (res.openclaw_installed && !skipRedirect) {
       setStep(0);
       return true; // Indicate that we're going to maintenance
+    } else if (!skipRedirect) {
+      setStep(0.5); // Go to Welcome page if not installed
     }
     return res.openclaw_installed; // Return installation status
   }
@@ -933,8 +1065,8 @@ function App() {
                   style={{flex: 1}}
                   onClick={async () => {
                     if (selectedMaint === "reconfigure") {
-                      // Go back to Environment Selection
-                      setStep(1);
+                      // Go to Configuration Mode
+                      setStep(4);
                     } else if (selectedMaint === "uninstall") {
                       if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
                         handleMaintenanceAction("uninstall");
@@ -961,6 +1093,25 @@ function App() {
                 </div>
               </div>
             )}
+          </div>
+        );
+      case 0.5:
+        return (
+          <div className="step-view welcome-view">
+            <div className="welcome-logo">🦞</div>
+            <h1 className="welcome-title">Welcome to ClawSetup</h1>
+            <p className="welcome-text">
+              The fastest way to deploy your AI agent. Get started in minutes.
+            </p>
+            <div className="button-group" style={{justifyContent: "center"}}>
+              <button 
+                className="primary" 
+                style={{minWidth: "200px", padding: "1rem 2rem", fontSize: "1.1rem"}}
+                onClick={() => setStep(1)}
+              >
+                Start Setup
+              </button>
+            </div>
           </div>
         );
       case 1:
@@ -1181,12 +1332,17 @@ function App() {
             </div>
             <div className="form-group">
               <label>Agent Vibe</label>
-              <select value={agentVibe} onChange={(e) => setAgentVibe(e.target.value)}>
-                <option>Professional</option>
-                <option>Friendly</option>
-                <option>Chaos</option>
-                <option>Helpful Assistant</option>
-              </select>
+              <RadioCard
+                value={agentVibe}
+                onChange={setAgentVibe}
+                columns={2}
+                options={[
+                  { value: "Professional", label: "Professional" },
+                  { value: "Friendly", label: "Friendly" },
+                  { value: "Chaos", label: "Chaos" },
+                  { value: "Helpful Assistant", label: "Helpful Assistant" }
+                ]}
+              />
             </div>
             <div className="button-group">
               <button className="primary" disabled={!agentName} onClick={() => setStep(mode === "advanced" ? 7 : 8)}>Next</button>
@@ -1205,24 +1361,39 @@ function App() {
             </div>
             <div className="form-group">
               <label>Bind Address</label>
-              <select value={gatewayBind} onChange={(e) => setGatewayBind(e.target.value)}>
-                <option value="loopback">Loopback (127.0.0.1)</option>
-                <option value="all">All Interfaces (0.0.0.0)</option>
-              </select>
+              <RadioCard
+                value={gatewayBind}
+                onChange={setGatewayBind}
+                columns={2}
+                options={[
+                  { value: "loopback", label: "Loopback (127.0.0.1)", description: "Only accessible from this machine" },
+                  { value: "all", label: "All Interfaces (0.0.0.0)", description: "Accessible from local network" }
+                ]}
+              />
             </div>
-            <div className="form-group">
+            <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Auth Mode</label>
-              <select value={gatewayAuthMode} onChange={(e) => setGatewayAuthMode(e.target.value)}>
-                <option value="token">Token (Secure)</option>
-                <option value="none">None (Insecure)</option>
-              </select>
+              <RadioCard
+                value={gatewayAuthMode}
+                onChange={setGatewayAuthMode}
+                columns={2}
+                options={[
+                  { value: "token", label: "Token (Secure)", description: "Requires authentication token" },
+                  { value: "none", label: "None (Insecure)", description: "No authentication required" }
+                ]}
+              />
             </div>
-            <div className="form-group">
+            <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Tailscale</label>
-              <select value={tailscaleMode} onChange={(e) => setTailscaleMode(e.target.value)}>
-                <option value="off">Disabled</option>
-                <option value="on">Enabled (Expose via Tailscale)</option>
-              </select>
+              <RadioCard
+                value={tailscaleMode}
+                onChange={setTailscaleMode}
+                columns={2}
+                options={[
+                  { value: "off", label: "Disabled", description: "Standard networking" },
+                  { value: "on", label: "Enabled", description: "Expose securely via Tailscale" }
+                ]}
+              />
             </div>
             <div className="button-group">
               <button className="primary" onClick={() => setStep(8)}>Continue</button>
@@ -1235,85 +1406,95 @@ function App() {
           <div className="step-view">
             <h2>Connect Brain</h2>
             <p className="step-description">Select your AI provider and authentication method.</p>
-            <div className="form-group">
-              <label>AI Provider</label>
-              <select value={provider} onChange={(e) => {
-                const p = e.target.value;
-                setProvider(p);
-                if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
-                  setModel(MODELS_BY_PROVIDER[p][0].value);
-                }
-              }}>
-                {/* Always show core providers first */}
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="google">Google Gemini</option>
-                <option value="openrouter">OpenRouter</option>
-                
-                {/* Dynamically show all other providers from our comprehensive list */}
-                {Object.keys(MODELS_BY_PROVIDER)
-                  .filter(p => !["anthropic", "openai", "google", "openrouter", "ollama"].includes(p))
-                  .sort()
-                  .map(p => (
-                    <option key={p} value={p}>
-                      {p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                    </option>
-                  ))
-                }
-                
-                <option value="ollama">Ollama (Local)</option>
-              </select>
-            </div>
             
             <div className="form-group">
+              <label>AI Provider</label>
+              <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+                <RadioCard
+                  value={provider}
+                  onChange={(p) => {
+                    setProvider(p);
+                    if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
+                      setModel(MODELS_BY_PROVIDER[p][0].value);
+                    }
+                  }}
+                  columns={2}
+                  options={[
+                    // Core providers
+                    { value: "anthropic", label: "Anthropic", icon: PROVIDER_LOGOS["anthropic"] },
+                    { value: "openai", label: "OpenAI", icon: PROVIDER_LOGOS["openai"] },
+                    { value: "google", label: "Google Gemini", icon: PROVIDER_LOGOS["google"] },
+                    { value: "openrouter", label: "OpenRouter", icon: PROVIDER_LOGOS["openrouter"] },
+                    { value: "ollama", label: "Ollama (Local)", icon: PROVIDER_LOGOS["ollama"] },
+                    // Others sorted alphabetically
+                    ...Object.keys(MODELS_BY_PROVIDER)
+                      .filter(p => !["anthropic", "openai", "google", "openrouter", "ollama"].includes(p))
+                      .sort()
+                      .map(p => ({
+                        value: p,
+                        label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                        icon: PROVIDER_LOGOS[p]
+                      }))
+                  ]}
+                />
+              </div>
+            </div>
+            
+            <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Auth Method</label>
-              <select value={authMethod} onChange={(e) => setAuthMethod(e.target.value)}>
-                {provider === "anthropic" && (
-                  <>
-                    <option value="token">Anthropic API Key</option>
-                    <option value="setup-token">Anthropic Token (from setup-token)</option>
-                  </>
-                )}
-                {provider === "google" && (
-                  <>
-                    <option value="token">Google Gemini API Key</option>
-                    <option value="antigravity">Google Antigravity OAuth</option>
-                    <option value="gemini_cli">Google Gemini CLI OAuth</option>
-                  </>
-                )}
-                {provider === "openai" && (
-                  <>
-                    <option value="token">OpenAI API Key</option>
-                    <option value="codex">OpenAI Codex (ChatGPT OAuth)</option>
-                  </>
-                )}
-                {provider !== "anthropic" && provider !== "google" && provider !== "openai" && (
-                   <option value="token">API Key (Standard)</option>
-                )}
-              </select>
+              <RadioCard
+                value={authMethod}
+                onChange={setAuthMethod}
+                columns={1}
+                options={[
+                  ...(provider === "anthropic" ? [
+                    { value: "token", label: "Anthropic API Key", description: "Standard API Key starting with sk-ant-..." },
+                    { value: "setup-token", label: "Anthropic Token (from setup-token)", description: "Temporary token from CLI setup" }
+                  ] : []),
+                  ...(provider === "google" ? [
+                    { value: "token", label: "Google Gemini API Key", description: "Standard API Key" },
+                    { value: "antigravity", label: "Google Antigravity OAuth", description: "Sign in with Google" },
+                    { value: "gemini_cli", label: "Google Gemini CLI OAuth", description: "Sign in via CLI" }
+                  ] : []),
+                  ...(provider === "openai" ? [
+                    { value: "token", label: "OpenAI API Key", description: "Standard API Key starting with sk-..." },
+                    { value: "codex", label: "OpenAI Codex (ChatGPT OAuth)", description: "Sign in with OpenAI account" }
+                  ] : []),
+                  ...(!["anthropic", "google", "openai"].includes(provider) ? [
+                     { value: "token", label: "API Key (Standard)", description: "Standard API Key for this provider" }
+                  ] : [])
+                ]}
+              />
             </div>
 
-            <div className="form-group">
+            <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Primary Model</label>
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
-                {MODELS_BY_PROVIDER[provider] ? (
-                  <optgroup label={`${provider.charAt(0).toUpperCase() + provider.slice(1)} Models`}>
-                    {MODELS_BY_PROVIDER[provider].map((m) => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
-                  </optgroup>
-                ) : (
-                  provider === "ollama" ? (
-                    <option value="ollama/llama3.1">Llama 3.1 (Local)</option>
-                  ) : (
-                    <option value={model}>{model}</option>
-                  )
-                )}
-              </select>
+              {MODELS_BY_PROVIDER[provider] ? (
+                 <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+                   <RadioCard
+                     value={model}
+                     onChange={setModel}
+                     columns={1}
+                     options={MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label }))}
+                   />
+                 </div>
+              ) : (
+                <RadioCard
+                   value={model}
+                   onChange={setModel}
+                   columns={1}
+                   options={provider === "ollama" ? [
+                     { value: "ollama/llama3.1", label: "Llama 3.1 (Local)" },
+                     { value: "ollama/deepseek-r1", label: "DeepSeek R1 (Local)" }
+                   ] : [
+                     { value: model, label: model }
+                   ]}
+                />
+              )}
             </div>
 
             {!isOAuthMethod(authMethod) && (
-              <div className="form-group">
+              <div className="form-group" style={{marginTop: "1.5rem"}}>
                 <label>{authMethod === "setup-token" ? "Anthropic Setup Token" : "API Key"}</label>
                 <input 
                   type="password" 
@@ -1330,7 +1511,7 @@ function App() {
             )}
 
             {isOAuthMethod(authMethod) && (
-              <div style={{marginTop: "1rem"}}>
+              <div style={{marginTop: "1.5rem"}}>
                 <button className="primary" style={{width: "100%"}} disabled={loading} onClick={async () => {
                   setLoading(true);
                   try {
@@ -1402,11 +1583,16 @@ function App() {
             <p className="step-description">Configure how the agent executes tools and skills.</p>
             <div className="form-group">
               <label>Node Package Manager</label>
-              <select value={nodeManager} onChange={(e) => setNodeManager(e.target.value)}>
-                <option value="npm">npm</option>
-                <option value="pnpm">pnpm</option>
-                <option value="bun">bun</option>
-              </select>
+              <RadioCard
+                value={nodeManager}
+                onChange={setNodeManager}
+                columns={3}
+                options={[
+                  { value: "npm", label: "npm" },
+                  { value: "pnpm", label: "pnpm" },
+                  { value: "bun", label: "bun" }
+                ]}
+              />
             </div>
             <div className="button-group">
               <button className="primary" onClick={() => setStep(11)}>Next</button>
@@ -1417,22 +1603,57 @@ function App() {
       case 11:
         return (
           <div className="step-view">
-            <h2>Select Core Skills</h2>
-            <p className="step-description">Enable the capabilities your agent will start with.</p>
-            <div className="skills-grid">
-              {availableSkills.map(skill => (
-                <div
-                  key={skill.id}
-                  className={`skill-card ${selectedSkills.includes(skill.id) ? "active" : ""}`}
-                  onClick={() => toggleSkill(skill.id)}
-                >
-                  <div className="skill-name">{skill.name}</div>
-                  <div className="skill-desc">{skill.desc}</div>
-                </div>
-              ))}
+            <h2>Select Skills</h2>
+            <p className="step-description">Enable capabilities and configure required keys.</p>
+            <div className="skills-container" style={{maxHeight: "450px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+              <div className="skills-grid">
+                {availableSkills.map(skill => (
+                  <div
+                    key={skill.id}
+                    className={`skill-card ${selectedSkills.includes(skill.id) ? "active" : ""}`}
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).tagName === "INPUT") return;
+                      toggleSkill(skill.id);
+                    }}
+                    style={{
+                      cursor: "pointer", 
+                      display: "flex", 
+                      flexDirection: "column", 
+                      gap: "0.5rem",
+                      minHeight: "100px"
+                    }}
+                  >
+                    <div className="skill-header" style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
+                      <div className="skill-name" style={{fontWeight: 700}}>{skill.name}</div>
+                      <div className={`radio-circle ${selectedSkills.includes(skill.id) ? "checked" : ""}`} style={{
+                        width: "18px",
+                        height: "18px",
+                        borderRadius: "50%",
+                        border: `2px solid ${selectedSkills.includes(skill.id) ? "var(--primary)" : "var(--text-muted)"}`,
+                        backgroundColor: selectedSkills.includes(skill.id) ? "var(--primary)" : "transparent",
+                        flexShrink: 0
+                      }} />
+                    </div>
+                    <div className="skill-desc" style={{fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: "1.4"}}>{skill.desc}</div>
+                    
+                    {skill.requiresAuth && selectedSkills.includes(skill.id) && (
+                      <div className="skill-auth" style={{marginTop: "auto", paddingTop: "0.5rem"}}>
+                        <input
+                          type="password"
+                          placeholder={skill.authPlaceholder || "API Key"}
+                          value={serviceKeys[skill.id] || ""}
+                          onChange={(e) => setServiceKeys({...serviceKeys, [skill.id]: e.target.value})}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{width: "100%", fontSize: "0.8rem", padding: "0.5rem", borderRadius: "8px"}}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{marginTop: "2rem"}}>
+            <div style={{marginTop: "1.5rem"}}>
               <button className="secondary" onClick={() => setShowCustomSkillForm(!showCustomSkillForm)}>
                 {showCustomSkillForm ? "Hide" : "+ Add"} Custom Skill
               </button>
@@ -1480,9 +1701,12 @@ function App() {
 
             <div className="button-group">
               <button className="primary" onClick={() => {
-                setCurrentServiceIdx(0);
-                setIsConfiguringService(false);
-                setStep(11.5);
+                // Skip Step 11.5 as auth is handled inline
+                if (mode === "advanced") {
+                  setStep(12);
+                } else {
+                  handleInstall();
+                }
               }}>Continue</button>
               <button className="secondary" onClick={() => setStep(10)}>Back</button>
             </div>
@@ -1494,15 +1718,16 @@ function App() {
             <h2>Service Key: {servicesToConfigure[currentServiceIdx].name}</h2>
             <p className="step-description">Would you like to provide a key for this optional service now?</p>
             
-            <div className="mode-card-container" style={{marginBottom: "2rem"}}>
-              <div className={`mode-card ${isConfiguringService === true ? "active" : ""}`} onClick={() => setIsConfiguringService(true)}>
-                <h3>Yes</h3>
-                <p>Configure {servicesToConfigure[currentServiceIdx].name} now.</p>
-              </div>
-              <div className={`mode-card ${isConfiguringService === false ? "active" : ""}`} onClick={() => setIsConfiguringService(false)}>
-                <h3>Skip</h3>
-                <p>I'll configure this later in the dashboard.</p>
-              </div>
+            <div style={{marginBottom: "2rem"}}>
+              <RadioCard
+                value={isConfiguringService === true ? "yes" : "no"}
+                onChange={(val) => setIsConfiguringService(val === "yes")}
+                columns={2}
+                options={[
+                  { value: "yes", label: "Yes", description: `Configure ${servicesToConfigure[currentServiceIdx].name} now.` },
+                  { value: "no", label: "Skip", description: "I'll configure this later in the dashboard." }
+                ]}
+              />
             </div>
 
             {isConfiguringService === true && (
@@ -1575,22 +1800,30 @@ function App() {
 
             <div className="form-group">
               <label>Sandbox Mode</label>
-              <select value={sandboxMode} onChange={e => setSandboxMode(e.target.value)}>
-                <option value="full">Full Sandbox (Recommended)</option>
-                <option value="partial">Partial Sandbox</option>
-                <option value="none">No Sandbox</option>
-              </select>
-              <p className="input-hint">Full sandbox provides maximum isolation for agent operations.</p>
+              <RadioCard
+                value={sandboxMode}
+                onChange={setSandboxMode}
+                columns={1}
+                options={[
+                  { value: "full", label: "Full Sandbox (Recommended)", description: "Maximum isolation for agent operations." },
+                  { value: "partial", label: "Partial Sandbox", description: "Standard isolation." },
+                  { value: "none", label: "No Sandbox", description: "Unrestricted access." }
+                ]}
+              />
             </div>
 
-            <div className="form-group">
+            <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Tools Policy</label>
-              <select value={toolsMode} onChange={e => setToolsMode(e.target.value)}>
-                <option value="allowlist">Allowlist (Recommended)</option>
-                <option value="denylist">Denylist</option>
-                <option value="all">All Tools</option>
-              </select>
-              <p className="input-hint">Allowlist mode only enables explicitly selected tools.</p>
+              <RadioCard
+                value={toolsMode}
+                onChange={setToolsMode}
+                columns={1}
+                options={[
+                  { value: "allowlist", label: "Allowlist (Recommended)", description: "Only enable explicitly selected tools." },
+                  { value: "denylist", label: "Denylist", description: "Block specific tools." },
+                  { value: "all", label: "All Tools", description: "Enable all available tools." }
+                ]}
+              />
             </div>
 
             {toolsMode === "allowlist" && (
@@ -1648,38 +1881,34 @@ function App() {
               <>
                 <div className="form-group" style={{marginTop: "1.5rem"}}>
                   <label>Fallback Model 1</label>
-                  <select value={fallbackModels[0] || ""} onChange={e => {
-                    const newModels = [...fallbackModels];
-                    newModels[0] = e.target.value;
-                    setFallbackModels(newModels);
-                  }}>
-                    <option value="">Select model...</option>
-                    {Object.entries(MODELS_BY_PROVIDER).map(([prov, models]) => (
-                      <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
-                        {models.map(m => (
-                          <option key={`${prov}-${m.value}`} value={m.value}>{m.label}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                  <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+                    <RadioCard
+                      value={fallbackModels[0] || ""}
+                      onChange={val => {
+                        const newModels = [...fallbackModels];
+                        newModels[0] = val;
+                        setFallbackModels(newModels);
+                      }}
+                      columns={1}
+                      options={Object.values(MODELS_BY_PROVIDER).flat().map(m => ({ value: m.value, label: m.label }))}
+                    />
+                  </div>
                 </div>
                 {fallbackModels[0] && (
-                  <div className="form-group">
+                  <div className="form-group" style={{marginTop: "1.5rem"}}>
                     <label>Fallback Model 2 (Optional)</label>
-                    <select value={fallbackModels[1] || ""} onChange={e => {
-                      const newModels = [...fallbackModels];
-                      newModels[1] = e.target.value;
-                      setFallbackModels(newModels);
-                    }}>
-                      <option value="">Select model...</option>
-                      {Object.entries(MODELS_BY_PROVIDER).map(([prov, models]) => (
-                        <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
-                          {models.map(m => (
-                            <option key={`${prov}-${m.value}`} value={m.value}>{m.label}</option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
+                    <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+                      <RadioCard
+                        value={fallbackModels[1] || ""}
+                        onChange={val => {
+                          const newModels = [...fallbackModels];
+                          newModels[1] = val;
+                          setFallbackModels(newModels);
+                        }}
+                        columns={1}
+                        options={Object.values(MODELS_BY_PROVIDER).flat().map(m => ({ value: m.value, label: m.label }))}
+                      />
+                    </div>
                   </div>
                 )}
               </>
@@ -1823,39 +2052,37 @@ function App() {
 
             <div className="form-group">
               <label>Primary Model</label>
-              <select
-                value={currentAgent.model}
-                onChange={(e) => {
-                  const updated = [...agentConfigs];
-                  updated[currentAgentConfigIdx].model = e.target.value;
-                  setAgentConfigs(updated);
-                }}
-              >
-                {Object.entries(MODELS_BY_PROVIDER).map(([prov, models]) => (
-                  <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
-                    {models.map(m => (
-                      <option key={`${prov}-${m.value}`} value={m.value}>{m.label}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+              <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+                <RadioCard
+                  value={currentAgent.model}
+                  onChange={(val) => {
+                    const updated = [...agentConfigs];
+                    updated[currentAgentConfigIdx].model = val;
+                    setAgentConfigs(updated);
+                  }}
+                  columns={1}
+                  options={Object.values(MODELS_BY_PROVIDER).flat().map(m => ({ value: m.value, label: m.label }))}
+                />
+              </div>
             </div>
 
-            <div className="form-group">
+            <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Agent Vibe</label>
-              <select
+              <RadioCard
                 value={currentAgent.vibe}
-                onChange={(e) => {
+                onChange={(val) => {
                   const updated = [...agentConfigs];
-                  updated[currentAgentConfigIdx].vibe = e.target.value;
+                  updated[currentAgentConfigIdx].vibe = val;
                   setAgentConfigs(updated);
                 }}
-              >
-                <option>Professional</option>
-                <option>Friendly</option>
-                <option>Chaos</option>
-                <option>Helpful Assistant</option>
-              </select>
+                columns={2}
+                options={[
+                  { value: "Professional", label: "Professional" },
+                  { value: "Friendly", label: "Friendly" },
+                  { value: "Chaos", label: "Chaos" },
+                  { value: "Helpful Assistant", label: "Helpful Assistant" }
+                ]}
+              />
             </div>
 
             <div className="form-group">
