@@ -372,6 +372,7 @@ function App() {
   // Pairing Data
   const [pairingInput, setPairingInput] = useState("");
   const [pairingStatus, setPairingStatus] = useState("");
+  const [isPaired, setIsPaired] = useState(false);
 
   const availableSkills = [
     { id: "1password", name: "1Password", desc: "Set up and use 1Password CLI (op) for secrets management." },
@@ -711,7 +712,8 @@ function App() {
               identity_md: a.identityMd || null,
               user_md: a.userMd || null,
               soul_md: a.soulMd || null
-            })) : null
+            })) : null,
+            preserve_state: isPaired
           }
         });
 
@@ -762,8 +764,10 @@ function App() {
         }
 
         setProgress("Finalizing setup...");
-        const instruction: string = await invoke("generate_pairing_code");
-        setPairingCode(instruction);
+        if (!isPaired) {
+          const instruction: string = await invoke("generate_pairing_code");
+          setPairingCode(instruction);
+        }
 
         // Get dashboard URL (tunneled)
         const url: string = await invoke("get_dashboard_url", {
@@ -826,7 +830,8 @@ function App() {
               identity_md: a.identityMd || null,
               user_md: a.userMd || null,
               soul_md: a.soulMd || null
-            })) : null
+            })) : null,
+            preserve_state: isPaired
           }
         });
 
@@ -846,8 +851,10 @@ function App() {
         await invoke("start_gateway");
 
         setProgress("Finalizing setup...");
-        const instruction: string = await invoke("generate_pairing_code");
-        setPairingCode(instruction);
+        if (!isPaired) {
+          const instruction: string = await invoke("generate_pairing_code");
+          setPairingCode(instruction);
+        }
 
         const url: string = await invoke("get_dashboard_url", {
           isRemote: false,
@@ -882,6 +889,7 @@ function App() {
         remote: remoteConfig
       });
       setPairingStatus("✅ Success! Bot paired.");
+      setIsPaired(true);
       setPairingInput("");
     } catch (e) {
       setPairingStatus("❌ Error: " + e);
@@ -2536,47 +2544,59 @@ function App() {
 
             <div className="pairing-result">
                <h3>Telegram Pairing</h3>
-               <p style={{color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "0.5rem"}}>
-                 Send any message to your bot to receive your code.
-               </p>
-               <div className="pairing-code-display">{pairingCode.includes("Ready") ? "READY" : pairingCode}</div>
-
-               {telegramToken && (
-                 <div className="form-group" style={{marginTop: "2rem"}}>
-                   <input
-                     type="text"
-                     placeholder="Enter code (e.g. 3RQ8EBFE)"
-                     value={pairingInput}
-                     onChange={(e) => setPairingInput(e.target.value.toUpperCase())}
-                     style={{textAlign: "center", letterSpacing: "2px", fontWeight: "bold"}}
-                   />
-                   <button className="primary" style={{width: "100%", marginTop: "1rem"}} onClick={handlePairing} disabled={!pairingInput || pairingStatus === "Verifying..."}>
-                     {pairingStatus === "Verifying..." ? "Verifying..." : "Pair Agent"}
-                   </button>
-                   {pairingStatus && (
-                     <p style={{marginTop: "1rem", fontWeight: "bold", color: pairingStatus.includes("Error") ? "var(--error)" : "var(--success)"}}>
-                       {pairingStatus}
-                     </p>
-                   )}
+               
+               {isPaired ? (
+                 <div style={{marginTop: "1rem", padding: "0.75rem", backgroundColor: "rgba(34, 197, 94, 0.1)", borderRadius: "8px", border: "1px solid rgba(34, 197, 94, 0.3)"}}>
+                    <strong style={{color: "rgb(34, 197, 94)"}}>✅ Telegram Paired</strong>
+                    <p style={{marginTop: "0.5rem", fontSize: "0.9rem", color: "var(--text)"}}>Your agent is connected to Telegram.</p>
                  </div>
+               ) : (
+                 <>
+                   <p style={{color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "0.5rem"}}>
+                     Send any message to your bot to receive your code.
+                   </p>
+                   <div className="pairing-code-display">{pairingCode.includes("Ready") ? "READY" : pairingCode}</div>
+
+                   {telegramToken && (
+                     <div className="form-group" style={{marginTop: "2rem"}}>
+                       <input
+                         type="text"
+                         placeholder="Enter code (e.g. 3RQ8EBFE)"
+                         value={pairingInput}
+                         onChange={(e) => setPairingInput(e.target.value.toUpperCase())}
+                         style={{textAlign: "center", letterSpacing: "2px", fontWeight: "bold"}}
+                       />
+                       <button className="primary" style={{width: "100%", marginTop: "1rem"}} onClick={handlePairing} disabled={!pairingInput || pairingStatus === "Verifying..."}>
+                         {pairingStatus === "Verifying..." ? "Verifying..." : "Pair Agent"}
+                       </button>
+                       {pairingStatus && (
+                         <p style={{marginTop: "1rem", fontWeight: "bold", color: pairingStatus.includes("Error") ? "var(--error)" : "var(--success)"}}>
+                           {pairingStatus}
+                         </p>
+                       )}
+                     </div>
+                   )}
+                 </>
                )}
 
-               {pairingStatus.includes("Success") && (
+               {(pairingStatus.includes("Success") || isPaired) && (
                   <div className="advanced-setup-prompt" style={{marginTop: "2rem", padding: "1.5rem", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid var(--primary)"}}>
                     <h3 style={{marginTop: 0, marginBottom: "0.5rem"}}>Configuration Complete</h3>
-                    <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready. Would you like to configure advanced settings (Gateway, Skills, Security, Multi-Agent) now?</p>
+                    <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready. {mode !== "advanced" && "Would you like to configure advanced settings (Gateway, Skills, Security, Multi-Agent) now?"}</p>
                     <div className="button-group" style={{gap: "1rem"}}>
                        <button className="primary" onClick={() => open(dashboardUrl)}>
                          Open Web Dashboard
                        </button>
-                       <button className="secondary" onClick={() => {
-                         setMode("advanced");
-                         setPairingStatus("");
-                         setSkipBasicConfig(true);
-                         setStep(7);
-                       }}>
-                         Configure Advanced
-                       </button>
+                       {mode !== "advanced" && (
+                         <button className="secondary" onClick={() => {
+                           setMode("advanced");
+                           setPairingStatus("");
+                           setSkipBasicConfig(true);
+                           setStep(7);
+                         }}>
+                           Configure Advanced
+                         </button>
+                       )}
                        <button className="secondary" onClick={() => invoke("close_app")}>
                          Exit Setup
                        </button>
@@ -2585,7 +2605,7 @@ function App() {
                )}
             </div>
 
-            {!pairingStatus.includes("Success") && (
+            {(!pairingStatus.includes("Success") && !isPaired) && (
               <div className="button-group" style={{flexDirection: "column", gap: "10px"}}>
                 <button className="primary" style={{width: "100%"}} onClick={() => open(dashboardUrl)}>
                   Open Web Dashboard {targetEnvironment === "cloud" && "(via Tunnel)"}

@@ -61,6 +61,8 @@ struct AgentConfig {
     soul_md: Option<String>,
     // Multi-agent support
     agents: Option<Vec<AgentData>>,
+    // New field to preserve state during updates
+    preserve_state: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -334,9 +336,11 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let agents_dir = format!("{}/agents/main/agent", openclaw_root);
 
     // Run gateway install FIRST to scaffold directories and defaults
-    // We ignore errors here in case it's already installed or if we're about to overwrite it anyway
-    let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix));
-    let _ = execute_ssh(&sess, &format!("{}openclaw gateway install --force", nvm_prefix));
+    // Skip force install if we want to preserve state
+    if config.preserve_state != Some(true) {
+        let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix));
+        let _ = execute_ssh(&sess, &format!("{}openclaw gateway install --force", nvm_prefix));
+    }
 
     execute_ssh(&sess, &format!("mkdir -p {} && mkdir -p {}", workspace, agents_dir))?;
 
@@ -353,9 +357,18 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
 
     let telegram_section = if let Some(ref token) = config.telegram_token {
         if !token.is_empty() {
-            format!(r#",
+             // Basic telegram config
+             let mut section = format!(r#",
   "plugins": {{ "entries": {{ "telegram": {{ "enabled": true }} }} }},
-  "channels": {{ "telegram": {{ "accounts": {{ "main": {{ "botToken": "{}", "name": "Primary Bot", "dmPolicy": "pairing" }} }} }} }}"#, token)
+  "channels": {{ "telegram": {{ "accounts": {{ "main": {{ "botToken": "{}", "name": "Primary Bot""#, token);
+             
+             // Only reset dmPolicy if NOT preserving state
+             if config.preserve_state != Some(true) {
+                 section.push_str(r#", "dmPolicy": "pairing""#);
+             }
+             
+             section.push_str(r#" }} }} }} }}"#);
+             section
         } else { String::new() }
     } else { String::new() };
 
@@ -894,9 +907,11 @@ fn install_openclaw() -> Result<String, String> {
 fn configure_agent(config: AgentConfig) -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     
-    // Run gateway install --force FIRST to scaffold
-    let _ = shell_command("openclaw gateway stop");
-    let _ = shell_command("openclaw gateway install --force");
+    // Run gateway install --force FIRST to scaffold, ONLY if not preserving state
+    if config.preserve_state != Some(true) {
+        let _ = shell_command("openclaw gateway stop");
+        let _ = shell_command("openclaw gateway install --force");
+    }
 
     let openclaw_root = home.join(".openclaw");
     let workspace = openclaw_root.join("workspace");
@@ -1162,7 +1177,10 @@ Serve {}."#, config.user_name)
         if !token.is_empty() {
             let _ = shell_command("openclaw plugins enable telegram");
             let _ = shell_command(&format!("openclaw config set channels.telegram.accounts.main.botToken {}", token));
-            let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy pairing");
+            // Only reset dmPolicy to pairing if we are NOT preserving state
+            if config.preserve_state != Some(true) {
+                let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy pairing");
+            }
             let _ = shell_command("openclaw config set channels.telegram.accounts.main.name \"Primary Bot\"");
         }
     }
