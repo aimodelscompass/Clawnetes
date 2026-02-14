@@ -425,7 +425,7 @@ function App() {
   const [pairingInput, setPairingInput] = useState("");
   const [pairingStatus, setPairingStatus] = useState("");
   const [isPaired, setIsPaired] = useState(false);
-  const [theme, setTheme] = useState("dark");
+  const [theme, setTheme] = useState("light");
 
   const availableSkills = [
     { id: "1password", name: "1Password", desc: "Set up and use 1Password CLI (op) for secrets management." },
