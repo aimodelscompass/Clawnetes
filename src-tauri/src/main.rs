@@ -1629,45 +1629,82 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     // Helper to extract values from markdown
     fn extract_md_value(content: &str, key: &str) -> String {
         for line in content.lines() {
-            if line.contains(key) {
-                let parts: Vec<&str> = line.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    return parts[1].trim().trim_matches('*').trim().to_string();
+            let trimmed = line.trim();
+            // Look for lines that match the pattern: - **Key:** value or **Key:** value
+            if trimmed.contains(&format!("**{}:**", key)) || trimmed.contains(&format!("- **{}:**", key)) {
+                if let Some(colon_pos) = trimmed.find(':') {
+                    let value = &trimmed[colon_pos + 1..];
+                    return value.trim().to_string();
                 }
             }
         }
         String::new()
     }
 
-    let (openclaw_json_str, auth_profiles_str, identity_str, user_str, soul_str, _home_dir) = if let Some(ref r) = remote {
-        let sess = connect_ssh(r)?;
-        let remote_home = execute_ssh(&sess, "echo $HOME")?.trim().to_string();
-        
-        let oc_json = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json").unwrap_or_default();
-        let auth_json = execute_ssh(&sess, "cat ~/.openclaw/agents/main/agent/auth-profiles.json").unwrap_or_default();
-        let id_md = execute_ssh(&sess, "cat ~/.openclaw/workspace/IDENTITY.md").unwrap_or_default();
-        let u_md = execute_ssh(&sess, "cat ~/.openclaw/workspace/USER.md").unwrap_or_default();
-        let s_md = execute_ssh(&sess, "cat ~/.openclaw/workspace/SOUL.md").unwrap_or_default();
-        
-        (oc_json, auth_json, id_md, u_md, s_md, remote_home)
+    // Establish session ONCE if remote
+    let session = if let Some(ref r) = remote {
+        Some(connect_ssh(r)?)
     } else {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-        let oc_path = home.join(".openclaw").join("openclaw.json");
-        let auth_path = home.join(".openclaw").join("agents").join("main").join("agent").join("auth-profiles.json");
-        let ws_path = home.join(".openclaw").join("workspace");
-        
-        (
-            fs::read_to_string(&oc_path).unwrap_or_default(),
-            fs::read_to_string(&auth_path).unwrap_or_default(),
-            fs::read_to_string(ws_path.join("IDENTITY.md")).unwrap_or_default(),
-            fs::read_to_string(ws_path.join("USER.md")).unwrap_or_default(),
-            fs::read_to_string(ws_path.join("SOUL.md")).unwrap_or_default(),
-            home.to_string_lossy().to_string()
-        )
+        None
     };
 
+    // Resolve Home Directory (Absolute) to avoid '~' ambiguity
+    let home_dir = if let Some(sess) = &session {
+        execute_ssh(sess, "echo $HOME").map_err(|e| format!("Failed to get remote home: {}", e))?.trim().to_string()
+    } else {
+        dirs::home_dir().ok_or("Could not find local home directory")?.to_string_lossy().to_string()
+    };
+
+    // Helper to read file content (using absolute paths)
+    let read_file_content = |path: &str| -> String {
+        if let Some(sess) = &session {
+            // Remote read
+            execute_ssh(sess, &format!("cat \"{}\"", path)).unwrap_or_default()
+        } else {
+            // Local read
+            fs::read_to_string(path).unwrap_or_default()
+        }
+    };
+
+    // Helper to list directories (used for skills)
+    let list_directories = |base_path: &str| -> Vec<String> {
+        let mut dirs_found = Vec::new();
+        if let Some(sess) = &session {
+            // Remote: use ls -F to mark directories with /
+            if let Ok(output) = execute_ssh(sess, &format!("ls -1 -F \"{}\"", base_path)) {
+                for line in output.lines() {
+                    if line.trim().ends_with('/') {
+                        dirs_found.push(line.trim().trim_matches('/').to_string());
+                    }
+                }
+            }
+        } else {
+            // Local
+            let path = std::path::Path::new(base_path);
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    if let Ok(ft) = entry.file_type() {
+                        if ft.is_dir() {
+                            if let Ok(name) = entry.file_name().into_string() {
+                                dirs_found.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dirs_found
+    };
+
+    // Fetch Main Config Files
+    let openclaw_json_str = read_file_content(&format!("{}/.openclaw/openclaw.json", home_dir));
+    let auth_profiles_str = read_file_content(&format!("{}/.openclaw/agents/main/agent/auth-profiles.json", home_dir));
+    let identity_str = read_file_content(&format!("{}/.openclaw/workspace/IDENTITY.md", home_dir));
+    let user_str = read_file_content(&format!("{}/.openclaw/workspace/USER.md", home_dir));
+    let soul_str = read_file_content(&format!("{}/.openclaw/workspace/SOUL.md", home_dir));
+
     if openclaw_json_str.is_empty() {
-        return Err("Configuration not found".to_string());
+        return Err("Configuration not found (openclaw.json is empty or missing)".to_string());
     }
 
     let oc_config: serde_json::Value = serde_json::from_str(&openclaw_json_str).map_err(|e| format!("Failed to parse openclaw.json: {}", e))?;
@@ -1681,18 +1718,18 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     let gateway_auth_mode = gateway.get("auth").and_then(|a| a.get("mode")).and_then(|v| v.as_str()).unwrap_or("token").to_string();
     let tailscale_mode = gateway.get("tailscale").and_then(|t| t.get("mode")).and_then(|v| v.as_str()).unwrap_or("off").to_string();
 
-    // Agent Config
+    // Agent Config (Defaults / Main)
     let defaults = oc_config.get("agents").and_then(|a| a.get("defaults")).unwrap_or(&empty_json);
     let model_primary = defaults.get("model").and_then(|m| m.get("primary")).and_then(|v| v.as_str()).unwrap_or("anthropic/claude-opus-4-6").to_string();
     
-    // Auth & Provider
+    // Auth & Provider (Main)
     let profile_name = format!("{}:default", model_primary.split('/').next().unwrap_or("anthropic"));
     let profile = auth_config.get("profiles").and_then(|p| p.get(&profile_name)).unwrap_or(&empty_json);
     let provider = profile.get("provider").and_then(|v| v.as_str()).unwrap_or("anthropic").to_string();
     let api_key = profile.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let auth_method = profile.get("type").and_then(|v| v.as_str()).unwrap_or(if profile.get("mode").is_some() { profile.get("mode").and_then(|v| v.as_str()).unwrap_or("token") } else { "token" }).to_string();
 
-    // Markdown Extraction
+    // Markdown Extraction (Main)
     let agent_name = extract_md_value(&identity_str, "Name");
     let agent_vibe = extract_md_value(&identity_str, "Vibe");
     let agent_emoji = extract_md_value(&identity_str, "Emoji");
@@ -1708,12 +1745,9 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         .unwrap_or("")
         .to_string();
 
-    // Skills (Approximate by checking config overrides if possible, or just defaults)
-    // Note: npx clawhub install modifies package.json in workspace/skills, not openclaw.json usually?
-    // Actually `openclaw.json` does NOT list installed skills usually, they are in `workspace/skills`.
-    // We can try to list directories in workspace/skills
-    // For now, we'll leave skills empty or try to list them if possible.
-    let skills = Vec::new(); // TODO: Implement reading workspace/skills directory
+    // Skills (Main)
+    // We look in ~/.openclaw/workspace/skills
+    let skills = list_directories(&format!("{}/.openclaw/workspace/skills", home_dir));
 
     // Advanced Settings
     let sandbox_mode = defaults.get("sandbox").and_then(|s| s.get("mode")).and_then(|v| v.as_str()).unwrap_or("full").to_string();
@@ -1744,54 +1778,60 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     // Multi-agent
     let empty_vec = vec![];
     let agent_list = oc_config.get("agents").and_then(|a| a.get("list")).and_then(|v| v.as_array()).unwrap_or(&empty_vec);
-    let enable_multi_agent = agent_list.len() > 1; // Assuming main is always there
+    let enable_multi_agent = agent_list.len() > 1; 
     let mut agent_configs = Vec::new();
 
     if enable_multi_agent {
-         // We need to fetch details for each agent
-         // This might be expensive remotely, but necessary
-         // Filter out 'main' or include it? The frontend expects sub-agents in the list usually?
-         // Frontend uses agentConfigs for the list of agents to configure.
-         // If multi-agent is enabled, we probably want to load all of them.
-         
          for agent_val in agent_list {
              let aid = agent_val.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
-             if aid.is_empty() || aid == "main" { continue; } // Skip main as it is handled by top-level
+             if aid.is_empty() || aid == "main" { continue; } 
              
-             let name = agent_val.get("name").and_then(|s| s.as_str()).unwrap_or("Agent").to_string();
-             let amodel = agent_val.get("model").and_then(|m| m.get("primary")).and_then(|s| s.as_str()).unwrap_or("").to_string();
-             let afallbacks: Vec<String> = agent_val.get("model").and_then(|m| m.get("fallbacks")).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+             // Basic info from openclaw.json
+             let mut name = agent_val.get("name").and_then(|s| s.as_str()).unwrap_or("Agent").to_string();
              
-             // We need to read their IDENTITY.md etc.
-             // Local or Remote
-             let (aid_md, _au_md, _as_md) = if let Some(r) = &remote {
-                 // We can reuse the session if we refactor, but for now just basic logic (inefficient but works)
-                 // NOTE: connect_ssh is expensive. In a real app we'd pass session.
-                 // For now, let's assume we can just use defaults or try to fetch.
-                 // Optimization: Don't fetch sub-agent MDs if too slow? Or just do it.
-                 let sess = connect_ssh(r)?;
-                 let imd = execute_ssh(&sess, &format!("cat ~/.openclaw/agents/{}/workspace/IDENTITY.md", aid)).unwrap_or_default();
-                 (imd, String::new(), String::new())
+             // Robust Model Extraction: Handle nested {primary: "..."} or simple string "..."
+             let amodel = if let Some(m_obj) = agent_val.get("model").and_then(|m| m.as_object()) {
+                 m_obj.get("primary").and_then(|s| s.as_str()).unwrap_or("").to_string()
+             } else if let Some(m_str) = agent_val.get("model").and_then(|s| s.as_str()) {
+                 m_str.to_string()
              } else {
-                 let home = dirs::home_dir().unwrap();
-                 let imd = fs::read_to_string(home.join(".openclaw").join("agents").join(&aid).join("workspace").join("IDENTITY.md")).unwrap_or_default();
-                 (imd, String::new(), String::new())
+                 "".to_string()
              };
+
+             let afallbacks: Vec<String> = agent_val.get("model")
+                 .and_then(|m| if m.is_object() { m.get("fallbacks") } else { None })
+                 .and_then(|v| serde_json::from_value(v.clone()).ok())
+                 .unwrap_or_default();
+             
+             // Read Agent Files (Absolute Paths)
+             let agent_workspace_base = format!("{}/.openclaw/agents/{}/workspace", home_dir, aid);
+
+             let aid_md = read_file_content(&format!("{}/IDENTITY.md", agent_workspace_base));
+             let au_md = read_file_content(&format!("{}/USER.md", agent_workspace_base));
+             let as_md = read_file_content(&format!("{}/SOUL.md", agent_workspace_base));
+
+             // Extract Metadata
+             let extracted_name = extract_md_value(&aid_md, "Name");
+             if !extracted_name.is_empty() { name = extracted_name; } // Identity MD overrides config name
              
              let avibe = extract_md_value(&aid_md, "Vibe");
              let aemoji = extract_md_value(&aid_md, "Emoji");
              
+             // Extract Skills for this agent
+             let askills = list_directories(&format!("{}/skills", agent_workspace_base));
+             let askills_opt = if askills.is_empty() { None } else { Some(askills) };
+
              agent_configs.push(AgentData {
                  id: aid,
                  name,
                  model: amodel,
                  fallback_models: Some(afallbacks),
-                 skills: None, // Hard to detect per-agent skills without reading package.json in each workspace
+                 skills: askills_opt,
                  vibe: avibe,
                  emoji: Some(aemoji),
                  identity_md: Some(aid_md),
-                 user_md: None,
-                 soul_md: None
+                 user_md: Some(au_md),
+                 soul_md: Some(as_md)
              });
          }
     }
@@ -1821,9 +1861,9 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         gateway_bind,
         gateway_auth_mode,
         tailscale_mode,
-        node_manager: "npm".to_string(), // Default, hard to detect
+        node_manager: "npm".to_string(), 
         skills,
-        service_keys: std::collections::HashMap::new(), // Hard to extract safely/reliably from auth-profiles without trying every key
+        service_keys: std::collections::HashMap::new(), 
         sandbox_mode: mapped_sandbox.to_string(),
         tools_mode: tools_mode.to_string(),
         allowed_tools,
