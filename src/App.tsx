@@ -2453,20 +2453,32 @@ Managed by ClawSetup.`,
             <div className="button-group">
               <button className="primary" onClick={() => {
                 if (enableMultiAgent) {
-                  // Initialize agent configs
-                  const configs = Array.from({ length: numAgents }, (_, i) => ({
-                    id: `agent-${i + 1}`,
-                    name: `Agent ${i + 1}`,
-                    model: model, // Default to main model
-                    fallbackModels: [],
-                    skills: [], // Start empty
-                    vibe: agentVibe,
-                    emoji: agentEmoji,
-                    identityMd: "",
-                    userMd: "",
-                    soulMd: ""
-                  }));
-                  setAgentConfigs(configs);
+                  // Only initialize agent configs if they don't exist or are empty
+                  // This preserves configs loaded from reconfigure
+                  if (agentConfigs.length === 0 || agentConfigs.length !== numAgents) {
+                    const configs = Array.from({ length: numAgents }, (_, i) => {
+                      // Check if we already have a config for this index (from loaded data)
+                      const existingConfig = agentConfigs[i];
+                      if (existingConfig && existingConfig.id) {
+                        // Preserve existing config
+                        return existingConfig;
+                      }
+                      // Create new default config
+                      return {
+                        id: `agent-${i + 1}`,
+                        name: `Agent ${i + 1}`,
+                        model: model, // Default to main model
+                        fallbackModels: [],
+                        skills: [], // Start empty
+                        vibe: agentVibe,
+                        emoji: agentEmoji,
+                        identityMd: "",
+                        userMd: "",
+                        soulMd: ""
+                      };
+                    });
+                    setAgentConfigs(configs);
+                  }
                   setCurrentAgentConfigIdx(0);
                   setActiveWorkspaceTab("identity"); // Reset tab
                   setStep(15.5);

@@ -1780,7 +1780,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     // Multi-agent
     let empty_vec = vec![];
     let agent_list = oc_config.get("agents").and_then(|a| a.get("list")).and_then(|v| v.as_array()).unwrap_or(&empty_vec);
-    let enable_multi_agent = agent_list.len() > 1; 
+    let enable_multi_agent = agent_list.len() > 1;
     let mut agent_configs = Vec::new();
 
     if enable_multi_agent {
@@ -1815,10 +1815,10 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
              // Extract Metadata
              let extracted_name = extract_md_value(&aid_md, "Name");
              if !extracted_name.is_empty() { name = extracted_name; } // Identity MD overrides config name
-             
+
              let avibe = extract_md_value(&aid_md, "Vibe");
              let aemoji = extract_md_value(&aid_md, "Emoji");
-             
+
              // Extract Skills for this agent
              let askills = list_directories(&format!("{}/skills", agent_workspace_base));
              let askills_opt = if askills.is_empty() { None } else { Some(askills) };
