@@ -502,6 +502,7 @@ function App() {
     { id: 13, name: "Fallbacks", advanced: true },
     { id: 14, name: "Session", advanced: true },
     { id: 15, name: "Agents", advanced: true },
+    { id: 16, name: "Review", hidden: true },
     { id: 17, name: "Pairing" }
   ];
 
@@ -1129,6 +1130,10 @@ Managed by ClawSetup.`,
               userMd: a.user_md || "",
               soulMd: a.soul_md || ""
           })));
+      }
+
+      if (config.is_paired !== undefined) {
+        setIsPaired(config.is_paired);
       }
 
       setMaintenanceStatus("✅ Configuration loaded.");
@@ -1868,33 +1873,12 @@ Managed by ClawSetup.`,
             <div className="button-group">
               <button className="primary" onClick={() => {
                 if (mode === "advanced") setStep(10);
-                else if (!hasChanges) setStep(17);
-                else handleInstall();
+                else setStep(16);
               }} disabled={loading}>
-                {mode === "advanced" ? "Continue" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Setup"))}
+                {mode === "advanced" ? "Continue" : "Next"}
               </button>
               <button className="secondary" onClick={() => setStep(8)} disabled={loading}>Back</button>
             </div>
-            
-            {(loading || error) && (
-              <div className="progress-container">
-                {loading && (
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{width: progress.includes("Gateway") ? "80%" : (progress.includes("skill") ? "50%" : "20%")}} />
-                  </div>
-                )}
-                <p style={{fontSize: "0.9rem", color: error ? "var(--error)" : "var(--primary)"}}>{error ? "Installation Failed" : progress}</p>
-                <div className="logs-container">
-                  <pre>{logs}</pre>
-                </div>
-              </div>
-            )}
-            
-            {error && (
-              <div style={{marginTop: "2rem"}}>
-                <button className="primary" style={{backgroundColor: "var(--error)", width: "100%"}} onClick={() => invoke("close_app")}>Exit Installation</button>
-              </div>
-            )}
           </div>
         );
       case 10:
@@ -2104,15 +2088,13 @@ Managed by ClawSetup.`,
                     // After last service, go to Step 12 if advanced, otherwise install
                     if (mode === "advanced") {
                       setStep(12);
-                    } else if (!hasChanges) {
-                      setStep(17);
                     } else {
-                      handleInstall();
+                      setStep(16);
                     }
                   }
                 }}
               >
-                {currentServiceIdx < servicesToConfigure.length - 1 ? "Next Service" : (mode === "advanced" ? "Continue to Advanced Settings" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Installation")))}
+                {currentServiceIdx < servicesToConfigure.length - 1 ? "Next Service" : (mode === "advanced" ? "Continue to Advanced Settings" : "Next")}
               </button>
               <button className="secondary" onClick={() => {
                 if (currentServiceIdx > 0) {
@@ -2123,19 +2105,6 @@ Managed by ClawSetup.`,
                 }
               }} disabled={loading}>Back</button>
             </div>
-            {(loading || error) && (
-               <div className="progress-container">
-                  <p style={{fontSize: "0.9rem", color: error ? "var(--error)" : "var(--primary)"}}>{error ? "Installation Failed" : progress}</p>
-                  <div className="logs-container">
-                    <pre>{logs}</pre>
-                  </div>
-               </div>
-            )}
-            {error && (
-              <div style={{marginTop: "2rem"}}>
-                <button className="primary" style={{backgroundColor: "var(--error)", width: "100%"}} onClick={() => invoke("close_app")}>Exit Installation</button>
-              </div>
-            )}
           </div>
         );
       case 12:
@@ -2401,36 +2370,14 @@ Managed by ClawSetup.`,
                   setCurrentAgentConfigIdx(0);
                   setActiveWorkspaceTab("identity"); // Reset tab
                   setStep(15.5);
-                } else if (!hasChanges) {
-                  setStep(17);
                 } else {
-                  handleInstall();
+                  setStep(16);
                 }
               }} disabled={loading}>
-                {enableMultiAgent ? "Continue" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Installation"))}
+                {enableMultiAgent ? "Continue" : "Next"}
               </button>
               <button className="secondary" onClick={() => setStep(14)} disabled={loading}>Back</button>
             </div>
-
-            {(loading || error || (progress && progress.includes("unchanged"))) && (
-              <div className="progress-container" style={{marginTop: "2rem"}}>
-                {loading && (
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{width: progress.includes("Gateway") ? "80%" : (progress.includes("skill") ? "50%" : "20%")}} />
-                  </div>
-                )}
-                <p style={{fontSize: "0.9rem", color: error ? "var(--error)" : "var(--primary)"}}>{error ? "Installation Failed" : progress}</p>
-                <div className="logs-container">
-                  <pre>{logs}</pre>
-                </div>
-              </div>
-            )}
-            
-            {error && (
-              <div style={{marginTop: "2rem"}}>
-                <button className="primary" style={{backgroundColor: "var(--error)", width: "100%"}} onClick={() => invoke("close_app")}>Exit Installation</button>
-              </div>
-            )}
           </div>
         );
       case 15.5:
@@ -2747,13 +2694,11 @@ Managed by ClawSetup.`,
                 if (currentAgentConfigIdx < agentConfigs.length - 1) {
                   setCurrentAgentConfigIdx(currentAgentConfigIdx + 1);
                   setActiveWorkspaceTab("identity");
-                } else if (!hasChanges) {
-                  setStep(17);
                 } else {
-                  handleInstall();
+                  setStep(16);
                 }
               }} disabled={loading}>
-                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Installation"))}
+                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : "Next"}
               </button>
               <button className="secondary" onClick={() => {
                 if (currentAgentConfigIdx > 0) {
@@ -2764,9 +2709,36 @@ Managed by ClawSetup.`,
                 }
               }} disabled={loading}>Back</button>
             </div>
+          </div>
+        );
 
-            {(loading || error || (progress && progress.includes("unchanged"))) && (
-              <div className="progress-container" style={{marginTop: "2rem"}}>
+      case 16:
+        return (
+          <div className="step-view">
+            <h2>Review Configuration</h2>
+            <p className="step-description">Review your changes before applying.</p>
+            
+            <div className="status-card" style={{
+              padding: "1.5rem", 
+              backgroundColor: hasChanges ? "rgba(59, 130, 246, 0.1)" : "rgba(34, 197, 94, 0.1)",
+              border: `1px solid ${hasChanges ? "var(--primary)" : "var(--success)"}`,
+              borderRadius: "12px",
+              marginBottom: "2rem",
+              textAlign: "center"
+            }}>
+               <div style={{fontSize: "2rem", marginBottom: "1rem"}}>
+                 {hasChanges ? "📝" : "✅"}
+               </div>
+               <h3>{hasChanges ? "Configuration Updated" : "No Changes Detected"}</h3>
+               <p style={{color: "var(--text-muted)"}}>
+                 {hasChanges 
+                   ? "You have modified the agent configuration. Click below to apply these changes." 
+                   : "Your configuration matches the current active settings."}
+               </p>
+            </div>
+
+            {(loading || error) && (
+              <div className="progress-container" style={{marginBottom: "2rem"}}>
                 {loading && (
                   <div className="progress-bar">
                     <div className="progress-fill" style={{width: progress.includes("Gateway") ? "80%" : (progress.includes("skill") ? "50%" : "20%")}} />
@@ -2778,12 +2750,19 @@ Managed by ClawSetup.`,
                 </div>
               </div>
             )}
-            
-            {error && (
-              <div style={{marginTop: "2rem"}}>
-                <button className="primary" style={{backgroundColor: "var(--error)", width: "100%"}} onClick={() => invoke("close_app")}>Exit Installation</button>
-              </div>
-            )}
+
+            <div className="button-group">
+              {hasChanges ? (
+                <button className="primary" onClick={handleInstall} disabled={loading}>
+                  {loading ? "Updating..." : "Update Configuration"}
+                </button>
+              ) : (
+                <button className="primary" onClick={() => setStep(17)}>
+                  Next
+                </button>
+              )}
+              <button className="secondary" onClick={() => setStep(mode === "advanced" ? 15.5 : 9)} disabled={loading}>Back</button>
+            </div>
           </div>
         );
 

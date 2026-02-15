@@ -61,6 +61,7 @@ struct CurrentConfig {
     soul_md: String,
     enable_multi_agent: bool,
     agent_configs: Vec<AgentData>,
+    is_paired: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -1689,6 +1690,17 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
          }
     }
 
+    // Check Pairing Status
+    let dm_policy = oc_config.get("channels")
+        .and_then(|c| c.get("telegram"))
+        .and_then(|t| t.get("accounts"))
+        .and_then(|a| a.get("main"))
+        .and_then(|m| m.get("dmPolicy"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    
+    let is_paired = dm_policy != "pairing";
+
     Ok(CurrentConfig {
         provider,
         api_key,
@@ -1717,7 +1729,8 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         user_md: user_str,
         soul_md: soul_str,
         enable_multi_agent,
-        agent_configs
+        agent_configs,
+        is_paired
     })
 }
 

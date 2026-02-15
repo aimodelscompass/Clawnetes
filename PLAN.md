@@ -41,6 +41,8 @@
 
 - [x] **Completion**
     - [x] Fix "Finish Installation" navigation and redundant install (Added deep config comparison).
+    - [x] Create "Review" page (Step 16) to display change status before finishing.
     - [x] Update UI to show "Finish" instead of "Finish Installation" when no changes are detected.
+    - [x] Hide pairing code input if agent is already paired.
     - [x] Git commit and push.
     - [x] Cleanup git repository (remove build artifacts and add .gitignore).
