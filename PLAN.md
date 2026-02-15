@@ -40,6 +40,6 @@
     - [x] Run `npm run tauri dev` (briefly) to ensure frontend builds.
 
 - [x] **Completion**
-    - [x] Fix "Finish Installation" navigation and redundant install.
+    - [x] Fix "Finish Installation" navigation and redundant install (Added deep config comparison).
     - [x] Git commit and push.
     - [x] Cleanup git repository (remove build artifacts and add .gitignore).
