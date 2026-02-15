@@ -777,13 +777,8 @@ Managed by ClawSetup.`,
     };
   }
 
-  async function handleInstall() {
-    setLoading(true);
-    setError(false);
-    setProgress("Starting setup...");
-
+  function constructConfigPayload() {
     const mappedSandboxMode = sandboxMode === "full" ? "all" : (sandboxMode === "partial" ? "non-main" : "off");
-
     const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${agentName}
 - **Vibe:** ${agentVibe}
@@ -791,7 +786,7 @@ Managed by ClawSetup.`,
 ---
 Managed by ClawSetup.`;
 
-    const configPayload = {
+    return {
         provider,
         api_key: apiKey,
         auth_method: authMethod,
@@ -818,31 +813,37 @@ Managed by ClawSetup.`;
         user_md: mode === "advanced" && userMd ? userMd : null,
         soul_md: mode === "advanced" && soulMd ? soulMd : null,
         agents: enableMultiAgent ? agentConfigs.map(a => ({
-            id: a.id,
-            name: a.name,
-            model: a.model,
-            fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
-            skills: a.skills.length > 0 ? a.skills : null,
-            vibe: a.vibe,
-            identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
+          id: a.id,
+          name: a.name,
+          model: a.model,
+          fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
+          skills: a.skills.length > 0 ? a.skills : null,
+          vibe: a.vibe,
+          identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
 - **Name:** ${a.name}
 - **Vibe:** ${a.vibe}
 - **Emoji:** ${a.emoji || "🦞"}
 ---
 Managed by ClawSetup.`,
-            user_md: a.userMd || null,
-            soul_md: a.soulMd || null
+          user_md: a.userMd || null,
+          soul_md: a.soulMd || null
         })) : null,
         preserve_state: isPaired
     };
+  }
+
+  async function handleInstall() {
+    setLoading(true);
+    setError(false);
+    setProgress("Starting setup...");
+
+    const configPayload = constructConfigPayload();
 
     if (initialConfigRef.current) {
         const initialPayload = transformInitialToPayload(initialConfigRef.current);
-        // We use JSON stringify for deep comparison which is simple but effective for this structure
         if (isDeepEqual(initialPayload, configPayload)) {
              setProgress("Configuration unchanged. Skipping installation...");
              setLogs("Configuration unchanged.");
-             // Use a small delay to show the message
              setTimeout(() => {
                  setLoading(false);
                  setStep(17);
@@ -1186,6 +1187,10 @@ Managed by ClawSetup.`,
   const isOAuthMethod = (method: string) => {
     return ["antigravity", "gemini_cli", "codex"].includes(method);
   };
+
+  const currentPayload = constructConfigPayload();
+  const initialPayload = transformInitialToPayload(initialConfigRef.current);
+  const hasChanges = !initialConfigRef.current || !isDeepEqual(initialPayload, currentPayload);
 
   const renderStep = () => {
     switch (step) {
@@ -1863,9 +1868,10 @@ Managed by ClawSetup.`,
             <div className="button-group">
               <button className="primary" onClick={() => {
                 if (mode === "advanced") setStep(10);
+                else if (!hasChanges) setStep(17);
                 else handleInstall();
               }} disabled={loading}>
-                {mode === "advanced" ? "Continue" : (loading ? "Installing..." : "Finish Setup")}
+                {mode === "advanced" ? "Continue" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Setup"))}
               </button>
               <button className="secondary" onClick={() => setStep(8)} disabled={loading}>Back</button>
             </div>
@@ -2098,13 +2104,15 @@ Managed by ClawSetup.`,
                     // After last service, go to Step 12 if advanced, otherwise install
                     if (mode === "advanced") {
                       setStep(12);
+                    } else if (!hasChanges) {
+                      setStep(17);
                     } else {
                       handleInstall();
                     }
                   }
                 }}
               >
-                {currentServiceIdx < servicesToConfigure.length - 1 ? "Next Service" : (mode === "advanced" ? "Continue to Advanced Settings" : (loading ? "Installing..." : "Finish Installation"))}
+                {currentServiceIdx < servicesToConfigure.length - 1 ? "Next Service" : (mode === "advanced" ? "Continue to Advanced Settings" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Installation")))}
               </button>
               <button className="secondary" onClick={() => {
                 if (currentServiceIdx > 0) {
@@ -2393,11 +2401,13 @@ Managed by ClawSetup.`,
                   setCurrentAgentConfigIdx(0);
                   setActiveWorkspaceTab("identity"); // Reset tab
                   setStep(15.5);
+                } else if (!hasChanges) {
+                  setStep(17);
                 } else {
                   handleInstall();
                 }
               }} disabled={loading}>
-                {enableMultiAgent ? "Continue" : (loading ? "Installing..." : "Finish Installation")}
+                {enableMultiAgent ? "Continue" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Installation"))}
               </button>
               <button className="secondary" onClick={() => setStep(14)} disabled={loading}>Back</button>
             </div>
@@ -2737,11 +2747,13 @@ Managed by ClawSetup.`,
                 if (currentAgentConfigIdx < agentConfigs.length - 1) {
                   setCurrentAgentConfigIdx(currentAgentConfigIdx + 1);
                   setActiveWorkspaceTab("identity");
+                } else if (!hasChanges) {
+                  setStep(17);
                 } else {
                   handleInstall();
                 }
               }} disabled={loading}>
-                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : (loading ? "Installing..." : "Finish Installation")}
+                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : (loading ? "Installing..." : (!hasChanges ? "Finish" : "Finish Installation"))}
               </button>
               <button className="secondary" onClick={() => {
                 if (currentAgentConfigIdx > 0) {
