@@ -27,6 +27,14 @@ export interface RadioCardOption {
   icon?: string;
 }
 
+export interface DropdownOption {
+  value: string;
+  label: string;
+  description?: string;
+  icon?: string;
+  emoji?: string;
+}
+
 export interface AgentConfigData {
   id: string;
   name: string;

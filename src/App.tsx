@@ -9,7 +9,7 @@ import { AVAILABLE_SKILLS } from "./presets/availableSkills";
 import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
-import RadioCard from "./components/RadioCard";
+import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig } from "./types";
 
 function App() {
@@ -154,7 +154,6 @@ function App() {
   const [pairingInput, setPairingInput] = useState("");
   const [pairingStatus, setPairingStatus] = useState("");
   const [isPaired, setIsPaired] = useState(false);
-  const [theme, setTheme] = useState("light");
 
   const availableSkills = AVAILABLE_SKILLS;
 
@@ -251,14 +250,6 @@ function App() {
       checkPairing();
     }
   }, [step]);
-
-  useEffect(() => {
-    if (theme === "light") {
-      document.body.classList.add("light-theme");
-    } else {
-      document.body.classList.remove("light-theme");
-    }
-  }, [theme]);
 
   // Update default auth method when provider changes
   useEffect(() => {
@@ -1464,7 +1455,7 @@ Managed by ClawSetup.`,
                       padding: "0.4rem", 
                       borderRadius: "8px", 
                       border: agentEmoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      background: agentEmoji === e ? "rgba(255, 75, 43, 0.1)" : "var(--bg-card)",
+                      background: agentEmoji === e ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
                       cursor: "pointer",
                       minWidth: "40px"
                     }}
@@ -1502,7 +1493,7 @@ Managed by ClawSetup.`,
                     padding: "1.5rem",
                     borderRadius: "12px",
                     border: agentType === t.id ? "2px solid var(--primary)" : "1px solid var(--border)",
-                    backgroundColor: agentType === t.id ? "rgba(255, 75, 43, 0.05)" : "var(--bg-card)",
+                    backgroundColor: agentType === t.id ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
                     cursor: "pointer",
                     textAlign: "center"
                   }}
@@ -1560,7 +1551,7 @@ Managed by ClawSetup.`,
                   <span key={s} style={{
                     padding: "0.25rem 0.75rem",
                     borderRadius: "20px",
-                    backgroundColor: "rgba(255, 75, 43, 0.1)",
+                    backgroundColor: "rgba(0, 122, 255, 0.08)",
                     border: "1px solid var(--primary)",
                     fontSize: "0.8rem",
                     fontWeight: 500
@@ -1632,10 +1623,9 @@ Managed by ClawSetup.`,
             </div>
             <div className="form-group">
               <label>Bind Address</label>
-              <RadioCard
+              <Dropdown
                 value={gatewayBind}
                 onChange={setGatewayBind}
-                columns={2}
                 options={[
                   { value: "loopback", label: "Loopback (127.0.0.1)", description: "Only accessible from this machine" },
                   { value: "all", label: "All Interfaces (0.0.0.0)", description: "Accessible from local network" }
@@ -1644,10 +1634,9 @@ Managed by ClawSetup.`,
             </div>
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Auth Mode</label>
-              <RadioCard
+              <Dropdown
                 value={gatewayAuthMode}
                 onChange={setGatewayAuthMode}
-                columns={2}
                 options={[
                   { value: "token", label: "Token (Secure)", description: "Requires authentication token" },
                   { value: "none", label: "None (Insecure)", description: "No authentication required" }
@@ -1656,10 +1645,9 @@ Managed by ClawSetup.`,
             </div>
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Tailscale</label>
-              <RadioCard
+              <Dropdown
                 value={tailscaleMode}
                 onChange={setTailscaleMode}
-                columns={2}
                 options={[
                   { value: "off", label: "Disabled", description: "Standard networking" },
                   { value: "on", label: "Enabled", description: "Expose securely via Tailscale" }
@@ -1682,37 +1670,32 @@ Managed by ClawSetup.`,
             
             <div className="form-group">
               <label>AI Provider</label>
-              <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                <RadioCard
-                  value={provider}
-                  onChange={(p) => {
-                    setProvider(p);
-                    if (DEFAULT_MODELS[p]) {
-                      setModel(DEFAULT_MODELS[p]);
-                    } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
-                      setModel(MODELS_BY_PROVIDER[p][0].value);
-                    }
-                  }}
-                  columns={2}
-                  options={[
-                    // Core providers
-                    { value: "anthropic", label: "Anthropic", icon: PROVIDER_LOGOS["anthropic"] },
-                    { value: "openai", label: "OpenAI", icon: PROVIDER_LOGOS["openai"] },
-                    { value: "google", label: "Google Gemini", icon: PROVIDER_LOGOS["google"] },
-                    { value: "google-vertex", label: "Google Vertex AI", icon: PROVIDER_LOGOS["google-vertex"] },
-                    { value: "openrouter", label: "OpenRouter", icon: PROVIDER_LOGOS["openrouter"] },
-                    { value: "xai", label: "xAI (Grok)", icon: PROVIDER_LOGOS["xai"] },
-                  ]}
-                />
-              </div>
+              <Dropdown
+                value={provider}
+                onChange={(p) => {
+                  setProvider(p);
+                  if (DEFAULT_MODELS[p]) {
+                    setModel(DEFAULT_MODELS[p]);
+                  } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
+                    setModel(MODELS_BY_PROVIDER[p][0].value);
+                  }
+                }}
+                options={[
+                  { value: "anthropic", label: "Anthropic", icon: PROVIDER_LOGOS["anthropic"] },
+                  { value: "openai", label: "OpenAI", icon: PROVIDER_LOGOS["openai"] },
+                  { value: "google", label: "Google Gemini", icon: PROVIDER_LOGOS["google"] },
+                  { value: "google-vertex", label: "Google Vertex AI", icon: PROVIDER_LOGOS["google-vertex"] },
+                  { value: "openrouter", label: "OpenRouter", icon: PROVIDER_LOGOS["openrouter"] },
+                  { value: "xai", label: "xAI (Grok)", icon: PROVIDER_LOGOS["xai"] },
+                ]}
+              />
             </div>
             
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Auth Method</label>
-              <RadioCard
+              <Dropdown
                 value={authMethod}
                 onChange={setAuthMethod}
-                columns={1}
                 options={[
                   ...(provider === "anthropic" ? [
                     { value: "token", label: "Anthropic API Key", description: "Standard API Key starting with sk-ant-..." },
@@ -1733,28 +1716,20 @@ Managed by ClawSetup.`,
 
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Primary Model</label>
-              {MODELS_BY_PROVIDER[provider] ? (
-                 <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                   <RadioCard
-                     value={model}
-                     onChange={setModel}
-                     columns={1}
-                     options={MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))}
-                   />
-                 </div>
-              ) : (
-                <RadioCard
-                   value={model}
-                   onChange={setModel}
-                   columns={1}
-                   options={provider === "ollama" ? [
-                     { value: "ollama/llama3.1", label: "Llama 3.1 (Local)" },
-                     { value: "ollama/deepseek-r1", label: "DeepSeek R1 (Local)" }
-                   ] : [
-                     { value: model, label: model }
-                   ]}
-                />
-              )}
+              <Dropdown
+                value={model}
+                onChange={setModel}
+                searchable={MODELS_BY_PROVIDER[provider] ? MODELS_BY_PROVIDER[provider].length > 10 : false}
+                options={MODELS_BY_PROVIDER[provider]
+                  ? MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))
+                  : (provider === "ollama" ? [
+                      { value: "ollama/llama3.1", label: "Llama 3.1 (Local)" },
+                      { value: "ollama/deepseek-r1", label: "DeepSeek R1 (Local)" }
+                    ] : [
+                      { value: model, label: model }
+                    ])
+                }
+              />
             </div>
 
               <div className="form-group" style={{marginTop: "1.5rem"}}>
@@ -1811,10 +1786,9 @@ Managed by ClawSetup.`,
             <p className="step-description">Configure how the agent executes tools and skills.</p>
             <div className="form-group">
               <label>Node Package Manager</label>
-              <RadioCard
+              <Dropdown
                 value={nodeManager}
                 onChange={setNodeManager}
-                columns={3}
                 options={[
                   { value: "npm", label: "npm" },
                   { value: "pnpm", label: "pnpm" },
@@ -1970,10 +1944,9 @@ Managed by ClawSetup.`,
             <p className="step-description">Would you like to provide a key for this optional service now?</p>
             
             <div style={{marginBottom: "2rem"}}>
-              <RadioCard
+              <Dropdown
                 value={isConfiguringService === true ? "yes" : "no"}
                 onChange={(val) => setIsConfiguringService(val === "yes")}
-                columns={2}
                 options={[
                   { value: "yes", label: "Yes", description: `Configure ${servicesToConfigure[currentServiceIdx].name} now.` },
                   { value: "no", label: "Skip", description: "I'll configure this later in the dashboard." }
@@ -2038,10 +2011,9 @@ Managed by ClawSetup.`,
 
             <div className="form-group">
               <label>Sandbox Mode</label>
-              <RadioCard
+              <Dropdown
                 value={sandboxMode}
                 onChange={setSandboxMode}
-                columns={1}
                 options={[
                   { value: "full", label: "Full Sandbox", description: "REQUIRES DOCKER! Select only if Docker is installed, otherwise this will break." },
                   { value: "partial", label: "Partial Sandbox", description: "Standard isolation." },
@@ -2052,10 +2024,9 @@ Managed by ClawSetup.`,
 
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Tools Policy</label>
-              <RadioCard
+              <Dropdown
                 value={toolsMode}
                 onChange={setToolsMode}
-                columns={1}
                 options={[
                   { value: "allowlist", label: "Allowlist (Recommended)", description: "Only enable explicitly selected tools." },
                   { value: "denylist", label: "Denylist", description: "Block specific tools." },
@@ -2109,38 +2080,33 @@ Managed by ClawSetup.`,
               <p className="step-description" style={{fontSize: "0.85rem", marginBottom: "0.75rem"}}>Change the primary model used by your agent.</p>
 
               <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
-              <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                <RadioCard
-                  value={provider}
-                  onChange={(p) => {
-                    setProvider(p);
-                    if (DEFAULT_MODELS[p]) {
-                      setModel(DEFAULT_MODELS[p]);
-                    } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
-                      setModel(MODELS_BY_PROVIDER[p][0].value);
-                    }
-                  }}
-                  columns={2}
-                  options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
-                    value: p,
-                    label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-                    icon: PROVIDER_LOGOS[p]
-                  }))}
-                />
-              </div>
+              <Dropdown
+                value={provider}
+                onChange={(p) => {
+                  setProvider(p);
+                  if (DEFAULT_MODELS[p]) {
+                    setModel(DEFAULT_MODELS[p]);
+                  } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
+                    setModel(MODELS_BY_PROVIDER[p][0].value);
+                  }
+                }}
+                options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                  value: p,
+                  label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                  icon: PROVIDER_LOGOS[p]
+                }))}
+              />
 
               {MODELS_BY_PROVIDER[provider] && (
-                <>
+                <div style={{marginTop: "0.75rem"}}>
                   <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
-                  <div style={{maxHeight: "250px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                    <RadioCard
-                      value={model}
-                      onChange={setModel}
-                      columns={1}
-                      options={MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))}
-                    />
-                  </div>
-                </>
+                  <Dropdown
+                    value={model}
+                    onChange={setModel}
+                    searchable={MODELS_BY_PROVIDER[provider].length > 10}
+                    options={MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))}
+                  />
+                </div>
               )}
             </div>
 
@@ -2169,46 +2135,40 @@ Managed by ClawSetup.`,
                       
                       {/* Provider Selection */}
                       <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
-                      <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                        <RadioCard
-                          value={currentProvider || ""}
-                          onChange={(newProv) => {
-                            if (!newProv) return;
-                            // Set default model for this provider
-                            const newModels = [...fallbackModels];
-                            if (DEFAULT_MODELS[newProv]) {
-                              newModels[idx] = DEFAULT_MODELS[newProv];
-                            } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                              newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
-                            }
-                            setFallbackModels(newModels);
-                          }}
-                          columns={2}
-                          options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
-                            value: p,
-                            label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-                            icon: PROVIDER_LOGOS[p]
-                          }))}
-                        />
-                      </div>
+                      <Dropdown
+                        value={currentProvider || ""}
+                        onChange={(newProv) => {
+                          if (!newProv) return;
+                          const newModels = [...fallbackModels];
+                          if (DEFAULT_MODELS[newProv]) {
+                            newModels[idx] = DEFAULT_MODELS[newProv];
+                          } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                            newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
+                          }
+                          setFallbackModels(newModels);
+                        }}
+                        options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                          value: p,
+                          label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                          icon: PROVIDER_LOGOS[p]
+                        }))}
+                      />
 
                       {/* Model Selection */}
                       {currentProvider && MODELS_BY_PROVIDER[currentProvider] && (
-                        <>
+                        <div style={{marginTop: "0.75rem"}}>
                           <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
-                          <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                            <RadioCard
-                              value={currentModel}
-                              onChange={(val) => {
-                                const newModels = [...fallbackModels];
-                                newModels[idx] = val;
-                                setFallbackModels(newModels);
-                              }}
-                              columns={1}
-                              options={MODELS_BY_PROVIDER[currentProvider].map(m => ({ value: m.value, label: m.label }))}
-                            />
-                          </div>
-                        </>
+                          <Dropdown
+                            value={currentModel}
+                            onChange={(val) => {
+                              const newModels = [...fallbackModels];
+                              newModels[idx] = val;
+                              setFallbackModels(newModels);
+                            }}
+                            searchable={MODELS_BY_PROVIDER[currentProvider].length > 10}
+                            options={MODELS_BY_PROVIDER[currentProvider].map(m => ({ value: m.value, label: m.label }))}
+                          />
+                        </div>
                       )}
 
                       {/* Auth Selection */}
@@ -2304,7 +2264,7 @@ Managed by ClawSetup.`,
                       padding: "1rem",
                       borderRadius: "10px",
                       border: selectedBusinessFunctions.includes(bf.id) ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      backgroundColor: selectedBusinessFunctions.includes(bf.id) ? "rgba(255, 75, 43, 0.05)" : "var(--bg-card)",
+                      backgroundColor: selectedBusinessFunctions.includes(bf.id) ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
                       cursor: "pointer"
                     }}
                   >
@@ -2477,7 +2437,7 @@ Managed by ClawSetup.`,
                       padding: "0.4rem", 
                       borderRadius: "8px", 
                       border: currentAgent.emoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      background: currentAgent.emoji === e ? "rgba(255, 75, 43, 0.1)" : "var(--bg-card)",
+                      background: currentAgent.emoji === e ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
                       cursor: "pointer",
                       minWidth: "40px"
                     }}
@@ -2490,38 +2450,35 @@ Managed by ClawSetup.`,
 
             <div className="form-group" style={{marginBottom: "1.5rem"}}>
               <label>Persona Template</label>
-              <div style={{maxHeight: "150px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                <RadioCard
-                  value={currentAgent.persona || "custom"}
-                  onChange={(val) => {
-                    const updated = [...agentConfigs];
-                    updated[currentAgentConfigIdx].persona = val;
-                    
-                    if (val !== "custom" && PERSONA_TEMPLATES[val]) {
-                      const t = PERSONA_TEMPLATES[val];
-                      let newIdentity = t.identity;
-                      let newSoul = t.soul;
-                      
-                      if (updated[currentAgentConfigIdx].name) {
-                         newIdentity = updateIdentityField(newIdentity, "Name", updated[currentAgentConfigIdx].name);
-                         newSoul = updateSoulMission(newSoul, updated[currentAgentConfigIdx].name);
-                      }
-                      
-                      updated[currentAgentConfigIdx].identityMd = newIdentity;
-                      updated[currentAgentConfigIdx].soulMd = newSoul;
+              <Dropdown
+                value={currentAgent.persona || "custom"}
+                onChange={(val) => {
+                  const updated = [...agentConfigs];
+                  updated[currentAgentConfigIdx].persona = val;
+
+                  if (val !== "custom" && PERSONA_TEMPLATES[val]) {
+                    const t = PERSONA_TEMPLATES[val];
+                    let newIdentity = t.identity;
+                    let newSoul = t.soul;
+
+                    if (updated[currentAgentConfigIdx].name) {
+                       newIdentity = updateIdentityField(newIdentity, "Name", updated[currentAgentConfigIdx].name);
+                       newSoul = updateSoulMission(newSoul, updated[currentAgentConfigIdx].name);
                     }
-                    setAgentConfigs(updated);
-                  }}
-                  columns={2}
-                  options={[
-                    { value: "custom", label: "Custom / Empty" },
-                    ...Object.keys(PERSONA_TEMPLATES).filter(k => k !== "custom").sort().map(k => ({
-                      value: k,
-                      label: PERSONA_TEMPLATES[k].name
-                    }))
-                  ]}
-                />
-              </div>
+
+                    updated[currentAgentConfigIdx].identityMd = newIdentity;
+                    updated[currentAgentConfigIdx].soulMd = newSoul;
+                  }
+                  setAgentConfigs(updated);
+                }}
+                options={[
+                  { value: "custom", label: "Custom / Empty" },
+                  ...Object.keys(PERSONA_TEMPLATES).filter(k => k !== "custom").sort().map(k => ({
+                    value: k,
+                    label: PERSONA_TEMPLATES[k].name
+                  }))
+                ]}
+              />
             </div>
 
             <h3 style={{marginTop: "2rem"}}>Agent Workspace</h3>
@@ -2574,43 +2531,38 @@ Managed by ClawSetup.`,
               <label>Primary Model</label>
               
               <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
-              <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                <RadioCard
-                   value={currentAgentProvider}
-                   onChange={(newProv) => {
-                     const updated = [...agentConfigs];
-                     if (DEFAULT_MODELS[newProv]) {
-                       updated[currentAgentConfigIdx].model = DEFAULT_MODELS[newProv];
-                     } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                       updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
-                     }
-                     setAgentConfigs(updated);
-                   }}
-                   columns={2}
-                   options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
-                     value: p,
-                     label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-                     icon: PROVIDER_LOGOS[p]
-                   }))}
-                />
-              </div>
-              
+              <Dropdown
+                value={currentAgentProvider}
+                onChange={(newProv) => {
+                  const updated = [...agentConfigs];
+                  if (DEFAULT_MODELS[newProv]) {
+                    updated[currentAgentConfigIdx].model = DEFAULT_MODELS[newProv];
+                  } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                    updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
+                  }
+                  setAgentConfigs(updated);
+                }}
+                options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                  value: p,
+                  label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                  icon: PROVIDER_LOGOS[p]
+                }))}
+              />
+
               {currentAgentProvider && MODELS_BY_PROVIDER[currentAgentProvider] && (
-                <>
+                <div style={{marginTop: "0.75rem"}}>
                   <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
-                  <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                    <RadioCard
-                       value={currentAgent.model}
-                       onChange={(val) => {
-                         const updated = [...agentConfigs];
-                         updated[currentAgentConfigIdx].model = val;
-                         setAgentConfigs(updated);
-                       }}
-                       columns={1}
-                       options={MODELS_BY_PROVIDER[currentAgentProvider].map(m => ({ value: m.value, label: m.label }))}
-                    />
-                  </div>
-                </>
+                  <Dropdown
+                    value={currentAgent.model}
+                    onChange={(val) => {
+                      const updated = [...agentConfigs];
+                      updated[currentAgentConfigIdx].model = val;
+                      setAgentConfigs(updated);
+                    }}
+                    searchable={MODELS_BY_PROVIDER[currentAgentProvider].length > 10}
+                    options={MODELS_BY_PROVIDER[currentAgentProvider].map(m => ({ value: m.value, label: m.label }))}
+                  />
+                </div>
               )}
               
               {currentAgentProvider && currentAgentProvider !== provider && !serviceKeys[currentAgentProvider] && !["ollama"].includes(currentAgentProvider) && (
@@ -2646,44 +2598,39 @@ Managed by ClawSetup.`,
                  return (
                    <>
                      <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
-                     <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                       <RadioCard
-                         value={currentFallbackProvider || ""}
-                         onChange={(newProv) => {
-                           if (!newProv) return;
-                           const updated = [...agentConfigs];
-                           if (DEFAULT_MODELS[newProv]) {
-                             updated[currentAgentConfigIdx].fallbackModels = [DEFAULT_MODELS[newProv]];
-                           } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                             updated[currentAgentConfigIdx].fallbackModels = [MODELS_BY_PROVIDER[newProv][0].value];
-                           }
-                           setAgentConfigs(updated);
-                         }}
-                         columns={2}
-                         options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
-                           value: p,
-                           label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-                           icon: PROVIDER_LOGOS[p]
-                         }))}
-                       />
-                     </div>
+                     <Dropdown
+                       value={currentFallbackProvider || ""}
+                       onChange={(newProv) => {
+                         if (!newProv) return;
+                         const updated = [...agentConfigs];
+                         if (DEFAULT_MODELS[newProv]) {
+                           updated[currentAgentConfigIdx].fallbackModels = [DEFAULT_MODELS[newProv]];
+                         } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                           updated[currentAgentConfigIdx].fallbackModels = [MODELS_BY_PROVIDER[newProv][0].value];
+                         }
+                         setAgentConfigs(updated);
+                       }}
+                       options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                         value: p,
+                         label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                         icon: PROVIDER_LOGOS[p]
+                       }))}
+                     />
 
                      {currentFallbackProvider && MODELS_BY_PROVIDER[currentFallbackProvider] && (
-                       <>
+                       <div style={{marginTop: "0.75rem"}}>
                          <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
-                         <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
-                           <RadioCard
-                             value={currentFallbackModel}
-                             onChange={(val) => {
-                               const updated = [...agentConfigs];
-                               updated[currentAgentConfigIdx].fallbackModels = [val];
-                               setAgentConfigs(updated);
-                             }}
-                             columns={1}
-                             options={MODELS_BY_PROVIDER[currentFallbackProvider].map(m => ({ value: m.value, label: m.label }))}
-                           />
-                         </div>
-                       </>
+                         <Dropdown
+                           value={currentFallbackModel}
+                           onChange={(val) => {
+                             const updated = [...agentConfigs];
+                             updated[currentAgentConfigIdx].fallbackModels = [val];
+                             setAgentConfigs(updated);
+                           }}
+                           searchable={MODELS_BY_PROVIDER[currentFallbackProvider].length > 10}
+                           options={MODELS_BY_PROVIDER[currentFallbackProvider].map(m => ({ value: m.value, label: m.label }))}
+                         />
+                       </div>
                      )}
 
                      {currentFallbackProvider && currentFallbackProvider !== provider && currentFallbackProvider !== currentAgentProvider && !serviceKeys[currentFallbackProvider] && !["ollama"].includes(currentFallbackProvider) && (
@@ -2831,35 +2778,32 @@ case 16:
 
             <div className="form-group" style={{marginBottom: "1.5rem"}}>
               <label>Persona Template</label>
-              <div style={{maxHeight: "150px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                <RadioCard
-                  value={selectedPersona}
-                  onChange={(val) => {
-                    setSelectedPersona(val);
-                    if (val !== "custom" && PERSONA_TEMPLATES[val]) {
-                      const t = PERSONA_TEMPLATES[val];
-                      let newIdentity = t.identity;
-                      let newSoul = t.soul;
-                      
-                      if (agentName) {
-                         newIdentity = updateIdentityField(newIdentity, "Name", agentName);
-                         newSoul = updateSoulMission(newSoul, agentName);
-                      }
-                      
-                      setIdentityMd(newIdentity);
-                      setSoulMd(newSoul);
+              <Dropdown
+                value={selectedPersona}
+                onChange={(val) => {
+                  setSelectedPersona(val);
+                  if (val !== "custom" && PERSONA_TEMPLATES[val]) {
+                    const t = PERSONA_TEMPLATES[val];
+                    let newIdentity = t.identity;
+                    let newSoul = t.soul;
+
+                    if (agentName) {
+                       newIdentity = updateIdentityField(newIdentity, "Name", agentName);
+                       newSoul = updateSoulMission(newSoul, agentName);
                     }
-                  }}
-                  columns={2}
-                  options={[
-                    { value: "custom", label: "Custom / Empty" },
-                    ...Object.keys(PERSONA_TEMPLATES).filter(k => k !== "custom").sort().map(k => ({
-                      value: k,
-                      label: PERSONA_TEMPLATES[k].name
-                    }))
-                  ]}
-                />
-              </div>
+
+                    setIdentityMd(newIdentity);
+                    setSoulMd(newSoul);
+                  }
+                }}
+                options={[
+                  { value: "custom", label: "Custom / Empty" },
+                  ...Object.keys(PERSONA_TEMPLATES).filter(k => k !== "custom").sort().map(k => ({
+                    value: k,
+                    label: PERSONA_TEMPLATES[k].name
+                  }))
+                ]}
+              />
             </div>
 
             <div className="workspace-tabs">
@@ -3066,33 +3010,18 @@ case 16:
 
   return (
     <div className="app-container">
-      <aside className="sidebar">
-        <div className="logo">
-          🦞 ClawSetup
-        </div>
-        <ul className="step-list">
-          {stepsList
-            .filter(s => !s.hidden)
-            .filter(s => mode === "advanced" || !s.advanced)
-            .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
-            .map((s, idx) => (
-              <li key={s.id} className={`step-indicator ${getStepStatus(s.id)}`}>
-                <span className="step-number">{idx + 1}</span>
-                {s.name}
-              </li>
-            ))}
-        </ul>
-        <div style={{marginTop: "auto", paddingTop: "1rem"}}>
-          <button 
-            className="secondary" 
-            style={{width: "100%", justifyContent: "space-between", padding: "0.5rem 1rem"}}
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            <span style={{fontSize: "0.85rem"}}>Theme</span>
-            <span>{theme === "dark" ? "🌙" : "☀️"}</span>
-          </button>
-        </div>
-      </aside>
+      <div className="top-bar">
+        <span className="top-bar-title">ClawSetup</span>
+      </div>
+      <div className="step-progress">
+        {stepsList
+          .filter(s => !s.hidden)
+          .filter(s => mode === "advanced" || !s.advanced)
+          .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
+          .map((s) => (
+            <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
+          ))}
+      </div>
 
       <main className="main-content">
         <div className="content-wrapper">
