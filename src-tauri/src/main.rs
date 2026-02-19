@@ -1119,9 +1119,9 @@ fn install_openclaw() -> Result<String, String> {
     {
         ensure_wsl2_installed()?;
         // Node.js should already be installed by install_local_nodejs()
-        // Install OpenClaw in WSL2 using npm
-        shell_command("wsl -- npm install -g openclaw")?;
-        shell_command("wsl -- openclaw --version")?;
+        // shell_command() already routes through WSL on Windows, so just use npm directly
+        shell_command("npm install -g openclaw")?;
+        shell_command("openclaw --version")?;
         Ok("OpenClaw installed successfully in WSL2.".to_string())
     }
     
@@ -1895,13 +1895,32 @@ fn ensure_wsl2_installed() -> Result<(), String> {
     Ok(())
 }
 
+/// Run a command as root inside WSL (for apt-get, system setup, etc.)
+/// This avoids the sudo password prompt by using `wsl -u root` directly.
+#[cfg(target_os = "windows")]
+fn wsl_root_command(cmd: &str) -> Result<String, String> {
+    let output = Command::new("wsl")
+        .args(["--user", "root", "--", "/bin/bash", "-c", cmd])
+        .output()
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        Err(format!("{}\n{}", stdout, stderr))
+    }
+}
+
 fn shell_command(cmd: &str) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     let (shell, args) = ("/bin/zsh", vec!["-l", "-c"]);
-    
+
     #[cfg(target_os = "windows")]
     let (shell, args) = ("wsl", vec!["--", "/bin/bash", "-c"]);
-    
+
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let (shell, args) = ("sh", vec!["-c"]);
 
@@ -2304,10 +2323,10 @@ async fn install_local_nodejs() -> Result<String, String> {
     {
         // On Windows: install WSL2 first, then Node.js inside WSL2
         ensure_wsl2_installed()?;
-        // Install Node.js in WSL2 using NodeSource repository
-        shell_command("curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -")
+        // Use wsl_root_command to run as root directly (avoids sudo password prompt)
+        wsl_root_command("curl -fsSL https://deb.nodesource.com/setup_22.x | bash -")
             .map_err(|e| format!("Failed to add NodeSource repository: {}", e))?;
-        shell_command("sudo apt-get install -y nodejs")
+        wsl_root_command("apt-get install -y nodejs")
             .map_err(|e| format!("Failed to install Node.js in WSL2: {}", e))?;
         return Ok("Node.js installed successfully in WSL2.".to_string());
     }
