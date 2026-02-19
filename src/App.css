@@ -1,7 +1,7 @@
 :root {
-  --primary: #007AFF;
-  --primary-hover: #0066D6;
-  --primary-light: rgba(0, 122, 255, 0.08);
+  --primary: #FF3B30;
+  --primary-hover: #E5342A;
+  --primary-light: rgba(255, 59, 48, 0.08);
   --bg-dark: #F5F5F7;
   --bg-card: #FFFFFF;
   --bg-input: #FFFFFF;
@@ -160,7 +160,7 @@ input, select, textarea {
 input:focus, select:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.12);
 }
 
 .input-hint {
@@ -181,7 +181,7 @@ button {
   align-items: center;
   justify-content: center;
   padding: 0.5rem 1rem;
-  border-radius: 8px;
+  border-radius: 9999px;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
@@ -413,7 +413,7 @@ button:disabled {
 .markdown-editor:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.12);
 }
 
 /* Custom Skill Form */
@@ -505,7 +505,7 @@ button:disabled {
   font-size: 2.3rem;
   font-weight: 800;
   margin-bottom: 1rem;
-  background: linear-gradient(135deg, #007AFF 0%, #5856D6 100%);
+  background: linear-gradient(135deg, #FF3B30 0%, #FF2D55 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -546,7 +546,7 @@ button:disabled {
 
 .dropdown-trigger.open {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.12);
 }
 
 .dropdown-trigger-content {
@@ -623,7 +623,7 @@ button:disabled {
 .dropdown-search:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.1);
 }
 
 .dropdown-options {

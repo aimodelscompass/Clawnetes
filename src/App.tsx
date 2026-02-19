@@ -1457,7 +1457,7 @@ Managed by ClawSetup.`,
                       padding: "0.4rem", 
                       borderRadius: "8px", 
                       border: agentEmoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      background: agentEmoji === e ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
+                      background: agentEmoji === e ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
                       cursor: "pointer",
                       minWidth: "40px"
                     }}
@@ -1495,7 +1495,7 @@ Managed by ClawSetup.`,
                     padding: "1.5rem",
                     borderRadius: "12px",
                     border: agentType === t.id ? "2px solid var(--primary)" : "1px solid var(--border)",
-                    backgroundColor: agentType === t.id ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
+                    backgroundColor: agentType === t.id ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
                     cursor: "pointer",
                     textAlign: "center"
                   }}
@@ -1553,7 +1553,7 @@ Managed by ClawSetup.`,
                   <span key={s} style={{
                     padding: "0.25rem 0.75rem",
                     borderRadius: "20px",
-                    backgroundColor: "rgba(0, 122, 255, 0.08)",
+                    backgroundColor: "rgba(255, 59, 48, 0.08)",
                     border: "1px solid var(--primary)",
                     fontSize: "0.8rem",
                     fontWeight: 500
@@ -2345,7 +2345,7 @@ Managed by ClawSetup.`,
                       padding: "1rem",
                       borderRadius: "10px",
                       border: selectedBusinessFunctions.includes(bf.id) ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      backgroundColor: selectedBusinessFunctions.includes(bf.id) ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
+                      backgroundColor: selectedBusinessFunctions.includes(bf.id) ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
                       cursor: "pointer"
                     }}
                   >
@@ -2371,7 +2371,7 @@ Managed by ClawSetup.`,
                     padding: "1rem",
                     borderRadius: "10px",
                     border: selectedBusinessFunctions.includes("custom-team") ? "2px solid var(--primary)" : "1px solid var(--border)",
-                    backgroundColor: selectedBusinessFunctions.includes("custom-team") ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
+                    backgroundColor: selectedBusinessFunctions.includes("custom-team") ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
                     cursor: "pointer"
                   }}
                 >
@@ -2556,7 +2556,7 @@ Managed by ClawSetup.`,
                       padding: "0.4rem",
                       borderRadius: "8px",
                       border: currentAgent.emoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      background: currentAgent.emoji === e ? "rgba(0, 122, 255, 0.08)" : "var(--bg-card)",
+                      background: currentAgent.emoji === e ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
                       cursor: "pointer",
                       minWidth: "40px"
                     }}
