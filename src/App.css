@@ -187,26 +187,61 @@ button {
   cursor: pointer;
   transition: all 0.2s;
   border: none;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ff6b6b 0%, #ee4545 50%, #cc3333 100%);
+  color: white;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
 }
 
 button.primary {
-  background-color: var(--primary);
-  color: white;
+  background: linear-gradient(180deg, #ff6b6b 0%, #ee4545 50%, #cc3333 100%);
 }
 
 button.primary:hover {
-  background-color: var(--primary-hover);
+  background: linear-gradient(180deg, #ff7c7c 0%, #ff5656 50%, #dd4444 100%);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 6px 12px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+}
+
+button.primary::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: skewX(-25deg);
+  transition: left 0.6s ease;
+}
+
+button.primary:hover::after {
+  left: 150%;
 }
 
 button.secondary {
-  background-color: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #f5f5f7 0%, #e8e8ea 50%, #dcdce0 100%);
+  color: var(--text-main);
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
 
 button.secondary:hover {
-  background-color: var(--bg-card);
-  color: var(--text-main);
+  background: linear-gradient(180deg, #f8f8fa 0%, #f0f0f2 50%, #e0e0e4 100%);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
 
 button:disabled {
