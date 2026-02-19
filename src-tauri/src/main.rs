@@ -1602,7 +1602,7 @@ Serve {}."#, config.user_name)
 
 #[command]
 fn start_gateway() -> Result<String, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let _home = dirs::home_dir().ok_or("Could not find home directory")?;
     // config_path removed as unused
 
     let _ = shell_command("openclaw gateway stop");
@@ -1855,7 +1855,7 @@ fn ensure_wsl2_installed() -> Result<(), String> {
     }
     
     // Install WSL2 using PowerShell
-    let install_wsl = "powershell -Command \"wsl --install --distribution Ubuntu\"";
+    let _install_wsl = "powershell -Command \"wsl --install --distribution Ubuntu\"";
     let output = Command::new("powershell")
         .args(["-Command", "wsl --install --distribution Ubuntu"])
         .output()
