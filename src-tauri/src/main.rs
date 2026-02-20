@@ -1071,6 +1071,12 @@ fn get_openclaw_version() -> String {
 #[command]
 fn uninstall_openclaw() -> Result<String, String> {
     let _ = shell_command("openclaw gateway stop");
+
+    // On Windows, global npm uninstall requires root inside WSL
+    #[cfg(target_os = "windows")]
+    wsl_root_command("npm uninstall -g openclaw")?;
+
+    #[cfg(not(target_os = "windows"))]
     shell_command("npm uninstall -g openclaw")?;
     
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
