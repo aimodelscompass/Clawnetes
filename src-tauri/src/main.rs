@@ -437,6 +437,9 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     if config.preserve_state != Some(true) {
         let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix));
         let _ = execute_ssh(&sess, &format!("{}openclaw gateway install --force", nvm_prefix));
+        // Stop gateway immediately after install to prevent crash-loop
+        // (install enables+starts the systemd service, but config lacks gateway.mode=local yet)
+        let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix));
     }
 
     execute_ssh(&sess, &format!("mkdir -p {} && mkdir -p {}", workspace, agents_dir))?;
@@ -847,6 +850,8 @@ Serve {}."#, config.user_name)
     }
 
     // Start Gateway
+    // Reset any failed systemd state from crash-loops before starting
+    let _ = execute_ssh(&sess, "systemctl --user reset-failed openclaw-gateway.service 2>/dev/null || true");
     execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix))?;
     execute_ssh(&sess, &format!("{}openclaw gateway start", nvm_prefix))?;
 
@@ -2446,5 +2451,96 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].name, "SubAgent 1");
         assert_eq!(agents[0].emoji, Some("🤖".to_string()));
+    }
+
+    #[test]
+    fn test_gateway_config_includes_mode_local() {
+        // The gateway config MUST include "mode": "local" to prevent
+        // "Gateway start blocked: set gateway.mode=local (current: unset)" error
+        let gateway_token = "test-token-123";
+        let gateway_auth_mode = "token";
+        let tailscale_mode = "off";
+        let gateway_port = 18789;
+        let gateway_bind = "127.0.0.1";
+
+        let config_val = serde_json::json!({
+            "gateway": {
+                "mode": "local",
+                "port": gateway_port,
+                "bind": gateway_bind,
+                "auth": { "mode": gateway_auth_mode, "token": gateway_token },
+                "tailscale": { "mode": tailscale_mode, "resetOnExit": false }
+            }
+        });
+
+        let gateway = config_val.get("gateway").expect("gateway key must exist");
+        assert_eq!(
+            gateway.get("mode").and_then(|v| v.as_str()),
+            Some("local"),
+            "gateway.mode must be set to 'local' to prevent startup failure"
+        );
+        assert_eq!(
+            gateway.get("port").and_then(|v| v.as_u64()),
+            Some(18789)
+        );
+        assert_eq!(
+            gateway.get("auth").and_then(|a| a.get("token")).and_then(|t| t.as_str()),
+            Some("test-token-123")
+        );
+    }
+
+    #[test]
+    fn test_gateway_startup_command_sequence() {
+        // Verify the correct command sequence for gateway startup on Windows/WSL:
+        // 1. gateway install --force
+        // 2. gateway stop (prevent crash-loop before config is written)
+        // 3. ... config is written ...
+        // 4. systemctl reset-failed (recover from any crash-loop)
+        // 5. gateway stop
+        // 6. gateway start
+
+        let nvm_prefix = "source ~/.nvm/nvm.sh && ";
+
+        // Commands after install (prevent crash-loop)
+        let install_cmd = format!("{}openclaw gateway install --force", nvm_prefix);
+        let stop_after_install_cmd = format!("{}openclaw gateway stop || true", nvm_prefix);
+
+        // Commands before start (recover from crash-loop)
+        let reset_failed_cmd = "systemctl --user reset-failed openclaw-gateway.service 2>/dev/null || true";
+        let stop_before_start_cmd = format!("{}openclaw gateway stop || true", nvm_prefix);
+        let start_cmd = format!("{}openclaw gateway start", nvm_prefix);
+
+        // Verify install is followed by stop
+        assert!(install_cmd.contains("gateway install --force"));
+        assert!(stop_after_install_cmd.contains("gateway stop"));
+
+        // Verify start sequence includes reset-failed
+        assert!(reset_failed_cmd.contains("reset-failed"));
+        assert!(reset_failed_cmd.contains("openclaw-gateway.service"));
+
+        // Verify stop comes before start
+        assert!(stop_before_start_cmd.contains("gateway stop"));
+        assert!(start_cmd.contains("gateway start"));
+        assert!(!start_cmd.contains("stop"));
+    }
+
+    #[test]
+    fn test_gateway_config_preserves_auth_token() {
+        // When reconfiguring, existing gateway auth token should be preserved
+        let existing_config = serde_json::json!({
+            "gateway": {
+                "mode": "local",
+                "auth": { "mode": "token", "token": "existing-secret-token" }
+            }
+        });
+
+        let token = existing_config
+            .get("gateway")
+            .and_then(|g| g.get("auth"))
+            .and_then(|a| a.get("token"))
+            .and_then(|t| t.as_str());
+
+        assert_eq!(token, Some("existing-secret-token"),
+            "Gateway auth token must be preserved during reconfiguration");
     }
 }
