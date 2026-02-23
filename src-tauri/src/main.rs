@@ -2535,38 +2535,6 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     })
 }
 
-
-#[command]
-fn verify_license(key: String) -> Result<bool, String> {
-    let client = reqwest::blocking::Client::new();
-    let res = client.post("https://api.gumroad.com/v2/licenses/verify")
-        .form(&[("product_id", "xOqUoDdfrjyCzuha5BUp9g=="), ("license_key", &key)])
-        .send()
-        .map_err(|e| format!("Network error: {}", e))?;
-
-    if !res.status().is_success() {
-         return Err("License verification failed (Invalid key or network error)".to_string());
-    }
-
-    let json: serde_json::Value = res.json().map_err(|e| format!("Failed to parse response: {}", e))?;
-    
-    if let Some(success) = json.get("success").and_then(|v| v.as_bool()) {
-        if success {
-             if let Some(purchase) = json.get("purchase") {
-                 if purchase.get("refunded").and_then(|v| v.as_bool()).unwrap_or(false) {
-                     return Err("License has been refunded.".to_string());
-                 }
-                 if purchase.get("chargebacked").and_then(|v| v.as_bool()).unwrap_or(false) {
-                     return Err("License has been chargebacked.".to_string());
-                 }
-             }
-             return Ok(true);
-        }
-    }
-    
-    Err("Invalid license key.".to_string())
-}
-
 #[command]
 async fn install_local_nodejs() -> Result<String, String> {
     #[cfg(target_os = "windows")]
@@ -2638,8 +2606,7 @@ fn main() {
             get_remote_gateway_token,
             verify_tunnel_connectivity,
             get_current_config,
-            check_pairing_status,
-            verify_license
+            check_pairing_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

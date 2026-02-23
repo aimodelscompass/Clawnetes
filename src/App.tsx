@@ -14,12 +14,12 @@ import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig } 
 
 function App() {
   const handleAdvancedTransition = async () => {
-    // Check if we already verified license in this session
-    if (maintCompleted) {
-       setStep(10.5);
-       return;
-    }
-    setShowLicenseModal(true);
+    // License key requirement removed for all installation types
+    setMode("advanced");
+    setPairingStatus("");
+    setSkipBasicConfig(true);
+    setMaintCompleted(true);
+    setStep(10.5);
   };
 
   const [step, setStep] = useState(0.5); // Start at Welcome page
@@ -63,12 +63,6 @@ function App() {
   const [maintenanceStatus, setMaintenanceStatus] = useState("");
   const [selectedMaint, setSelectedMaint] = useState<string>("repair");
   const [maintCompleted, setMaintCompleted] = useState(false);
-
-  // License
-  const [showLicenseModal, setShowLicenseModal] = useState(false);
-  const [licenseKey, setLicenseKey] = useState("");
-  const [verifyingLicense, setVerifyingLicense] = useState(false);
-  const [licenseError, setLicenseError] = useState("");
 
   // Service Keys State
   const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
@@ -3418,7 +3412,6 @@ case 16:
                           <div>Multi-agent teams &bull; 40+ integrations &bull; Scheduled automations</div>
                           <div>CRM, support, social media &bull; Smart failover &bull; Security controls</div>
                         </div>
-                        <p style={{marginBottom: "1.5rem"}}><strong style={{fontSize: "1.1rem"}}>$9.99</strong> <span style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>once &bull; yours forever</span></p>
                       </>
                     ) : (
                       <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready.</p>
@@ -3428,13 +3421,22 @@ case 16:
                          Open Web Dashboard
                        </button>
                        {mode !== "advanced" && (
-                         <button className="secondary" onClick={() => setShowLicenseModal(true)} style={{backgroundColor: "var(--primary)", color: "#fff", border: "none"}}>
-                           Unlock Advanced - $9.99
+                         <button className="secondary" onClick={handleAdvancedTransition}>
+                           Continue to Advanced Settings
                          </button>
                        )}
                        <button className="secondary" onClick={() => invoke("close_app")}>
                          Exit Setup
                        </button>
+                    </div>
+                    <div style={{marginTop: "1.5rem", textAlign: "center"}}>
+                      <a
+                        href="#"
+                        onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawsetup"); }}
+                        style={{color: "var(--text-muted)", fontSize: "0.9rem", textDecoration: "underline", cursor: "pointer"}}
+                      >
+                        If you find OpenClaw useful, please consider making a small donation to support development.
+                      </a>
                     </div>
                   </div>
                )}
@@ -3479,86 +3481,6 @@ case 16:
         </div>
       </main>
 
-      {showLicenseModal && (
-        <div className="modal-overlay" style={{
-          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: "rgba(0,0,0,0.7)", zIndex: 1000,
-          display: "flex", justifyContent: "center", alignItems: "center"
-        }}>
-          <div className="modal-content" style={{
-            backgroundColor: "var(--bg-card)", padding: "2rem", borderRadius: "12px",
-            width: "400px", maxWidth: "90%", border: "1px solid var(--border)"
-          }}>
-            <h3 style={{marginTop: 0}}>Advanced Setup License</h3>
-            <p style={{fontSize: "0.9rem", color: "var(--text-muted)"}}>
-              Advanced features require a license key. You can purchase one from Gumroad.
-            </p>
-            
-            <div className="form-group" style={{marginTop: "1.5rem"}}>
-              <label>License Key</label>
-              <input 
-                value={licenseKey}
-                onChange={(e) => setLicenseKey(e.target.value)}
-                placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
-                autoFocus
-              />
-            </div>
-            
-            <div style={{marginTop: "1rem", fontSize: "0.85rem"}}>
-              <a 
-                href="#" 
-                onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawsetup"); }}
-                style={{color: "var(--primary)"}}
-              >
-                Get a license key &rarr;
-              </a>
-            </div>
-
-            {licenseError && (
-              <div className="error" style={{marginTop: "1rem", fontSize: "0.85rem", color: "var(--error)"}}>
-                {licenseError}
-              </div>
-            )}
-
-            <div className="button-group" style={{marginTop: "2rem"}}>
-              <button 
-                className="primary" 
-                disabled={!licenseKey || verifyingLicense}
-                onClick={async () => {
-                  setVerifyingLicense(true);
-                  setLicenseError("");
-                  try {
-                    await invoke("verify_license", { key: licenseKey.trim() });
-                    // Success
-                    setVerifyingLicense(false);
-                    setShowLicenseModal(false);
-                    setMode("advanced");
-                    setPairingStatus("");
-                    setSkipBasicConfig(true); setMaintCompleted(true);
-                    setStep(10.5);
-                  } catch (e) {
-                    setVerifyingLicense(false);
-                    setLicenseError(String(e));
-                  }
-                }}
-              >
-                {verifyingLicense ? "Verifying..." : "Verify & Continue"}
-              </button>
-              <button 
-                className="secondary" 
-                onClick={() => {
-                  setShowLicenseModal(false);
-                  setLicenseError("");
-                }}
-                disabled={verifyingLicense}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    
     </div>
   );
 }
