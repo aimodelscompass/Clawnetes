@@ -3,4 +3,4 @@
 - **Vibe:** Deep, Questioning, Abstract
 - **Emoji:** 🏛️
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

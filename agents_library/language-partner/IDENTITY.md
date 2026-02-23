@@ -3,4 +3,4 @@
 - **Vibe:** Patient, Cultural, conversational
 - **Emoji:** 🗣️
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

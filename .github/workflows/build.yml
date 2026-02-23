@@ -34,7 +34,7 @@ jobs:
     - name: Upload Windows MSI
       uses: actions/upload-artifact@v4
       with:
-        name: clawsetup-windows
+        name: clawnetes-windows
         path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
 
   build-macos:
@@ -64,5 +64,5 @@ jobs:
     - name: Upload macOS DMG
       uses: actions/upload-artifact@v4
       with:
-        name: clawsetup-macos
+        name: clawnetes-macos
         path: src-tauri/target/release/bundle/dmg/*.dmg

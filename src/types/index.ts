@@ -1,4 +1,4 @@
-// Shared TypeScript interfaces for ClawSetup
+// Shared TypeScript interfaces for Clawnetes
 
 export interface PersonaTemplate {
   name: string;

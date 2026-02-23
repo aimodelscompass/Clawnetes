@@ -467,7 +467,7 @@ function App() {
 - **Name:** ${initial.agent_name}
 - **Emoji:** ${initial.agent_emoji || "🦞"}
 ---
-Managed by ClawSetup.`;
+Managed by Clawnetes.`;
 
     const mappedSandboxMode = initial.sandbox_mode === "full" ? "all" : (initial.sandbox_mode === "partial" ? "non-main" : (initial.sandbox_mode === "none" ? "off" : initial.sandbox_mode));
 
@@ -508,7 +508,7 @@ Managed by ClawSetup.`;
 - **Name:** ${a.name}
 - **Emoji:** ${a.emoji || "🦞"}
 ---
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         user_md: a.user_md || null,
         soul_md: a.soul_md || null,
         tools_md: a.tools_md || null,
@@ -531,7 +531,7 @@ Managed by ClawSetup.`,
 - **Name:** ${agentName}
 - **Emoji:** ${agentEmoji}
 ---
-Managed by ClawSetup.`;
+Managed by Clawnetes.`;
 
     // For preset agents, always include preset-configured fields
     const usePresetFields = isPresetAgent || mode === "advanced";
@@ -573,7 +573,7 @@ Managed by ClawSetup.`;
 - **Name:** ${a.name}
 - **Emoji:** ${a.emoji || "🦞"}
 ---
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
           user_md: a.userMd || null,
           soul_md: a.soulMd || null,
           tools_md: a.toolsMd || null,
@@ -1177,7 +1177,7 @@ Managed by ClawSetup.`,
         return (
           <div className="step-view welcome-view">
             <div className="welcome-logo">🦞</div>
-            <h1 className="welcome-title">Welcome to ClawSetup</h1>
+            <h1 className="welcome-title">Welcome to Clawnetes</h1>
             <p className="welcome-text">
               The fastest way to deploy your AI agent. Get started in minutes.
             </p>
@@ -3432,7 +3432,7 @@ case 16:
                     <div style={{marginTop: "1.5rem", textAlign: "center"}}>
                       <a
                         href="#"
-                        onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawsetup"); }}
+                        onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawnetes"); }}
                         style={{color: "var(--text-muted)", fontSize: "0.9rem", textDecoration: "underline", cursor: "pointer"}}
                       >
                         If you find OpenClaw useful, please consider making a small donation to support development.
@@ -3463,7 +3463,7 @@ case 16:
   return (
     <div className="app-container">
       <div className="top-bar">
-        <span className="top-bar-title">ClawSetup</span>
+        <span className="top-bar-title">Clawnetes</span>
       </div>
       <div className="step-progress">
         {stepsList

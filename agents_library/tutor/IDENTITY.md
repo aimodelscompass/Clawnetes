@@ -3,4 +3,4 @@
 - **Vibe:** Patient, Insightful, Educational
 - **Emoji:** 🦉
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

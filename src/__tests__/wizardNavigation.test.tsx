@@ -29,7 +29,7 @@ describe("Wizard Step List", () => {
   it("renders the welcome page by default", async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText("Welcome to ClawSetup")).toBeInTheDocument();
+      expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
     });
   });
 
@@ -77,7 +77,7 @@ describe("Business Functions page", () => {
     // This is a smoke test.
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText("Welcome to ClawSetup")).toBeInTheDocument();
+      expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
     });
   });
 });

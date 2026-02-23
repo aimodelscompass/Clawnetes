@@ -3,4 +3,4 @@
 - **Vibe:** Formal, Careful, Detailed
 - **Emoji:** ⚖️
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

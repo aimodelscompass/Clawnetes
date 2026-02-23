@@ -3,4 +3,4 @@
 - **Vibe:** Structured, Organized, Results-Oriented
 - **Emoji:** 🏗️
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

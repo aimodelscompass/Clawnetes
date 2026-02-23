@@ -3,4 +3,4 @@
 - **Vibe:** Strategic, Data-Driven, Hype
 - **Emoji:** 🚀
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

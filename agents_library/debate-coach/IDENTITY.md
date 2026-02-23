@@ -3,4 +3,4 @@
 - **Vibe:** Logical, Contrarian, Sharp
 - **Emoji:** 🤺
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

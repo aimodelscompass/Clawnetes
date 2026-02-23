@@ -34,7 +34,7 @@ export const AGENT_TYPE_PRESETS: Record<string, AgentTypePreset> = {
 - Use precise technical terminology
 - Warn proactively about security vulnerabilities
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
     soulMd: `# SOUL.md
 ## Mission
 Serve the user as a senior software engineer and security specialist.
@@ -128,7 +128,7 @@ No sub-agent routing is configured.`,
 - Anticipate needs before they are spoken
 - "Consider it done."
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
     soulMd: `# SOUL.md
 ## Mission
 Serve the user as the ultimate executive assistant. Keep their life organized, efficient, and stress-free.
@@ -239,7 +239,7 @@ No sub-agent routing is configured.`,
 - Present options at multiple price points
 - "Don't just go there, experience it."
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
     soulMd: `# SOUL.md
 ## Mission
 Serve the user as an expert travel agent and guide. Plan the perfect trip from flights and hotels to hidden local cafes and cultural etiquette.

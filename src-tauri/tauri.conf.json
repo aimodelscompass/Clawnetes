@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "ClawSetup",
+    "productName": "Clawnetes",
     "version": "0.1.0"
   },
   "tauri": {
@@ -25,7 +25,7 @@
         "depends": []
       },
       "externalBin": [],
-      "identifier": "com.clawsetup.app",
+      "identifier": "com.clawnetes.app",
       "longDescription": "",
       "macOS": {
         "entitlements": null,
@@ -61,7 +61,7 @@
         "fullscreen": false,
         "height": 850,
         "resizable": true,
-        "title": "ClawSetup",
+        "title": "Clawnetes",
         "width": 1200
       }
     ]

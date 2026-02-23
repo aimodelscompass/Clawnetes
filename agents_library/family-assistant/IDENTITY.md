@@ -3,4 +3,4 @@
 - **Vibe:** Cheerful, Organized, Firm
 - **Emoji:** 🏡
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

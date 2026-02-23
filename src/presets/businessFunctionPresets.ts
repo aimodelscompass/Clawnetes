@@ -17,7 +17,7 @@ export const BUSINESS_FUNCTION_PRESETS: Record<string, BusinessFunctionPreset> =
 ---
 I am the central coordinator for personal productivity tasks. I route requests to specialized sub-agents for calendar management, email handling, and task tracking.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
       soulMd: `# SOUL.md
 ## Mission
 Serve the user by orchestrating their personal productivity tools. Route tasks to the right sub-agent and provide unified summaries.
@@ -57,7 +57,7 @@ Track user preferences for productivity tools and workflows.`,
 ---
 I manage calendar events, schedule meetings, and handle time zone coordination.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Manage the user's calendar efficiently. Handle scheduling conflicts, time zones, and meeting preparation.`,
@@ -81,7 +81,7 @@ Track meeting patterns, preferred meeting times, and recurring events.`,
 ---
 I manage email communications, draft responses, and organize the inbox.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Manage the user's email efficiently. Draft responses, organize inbox, and flag important messages.`,
@@ -115,7 +115,7 @@ Track email contacts, response patterns, and communication preferences.`,
 ---
 I coordinate software development workflows, routing code reviews and testing tasks to specialized sub-agents.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
       soulMd: `# SOUL.md
 ## Mission
 Orchestrate software development tasks. Route code reviews and testing to specialized agents.
@@ -155,7 +155,7 @@ Track active projects, tech stacks, and development conventions.`,
 ---
 I review code for quality, security, and best practices.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Review code thoroughly. Check for bugs, security issues, performance problems, and adherence to best practices.`,
@@ -179,7 +179,7 @@ Track code review patterns, common issues, and project conventions.`,
 ---
 I write, run, and analyze tests for software projects.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Ensure code quality through comprehensive testing. Write unit tests, integration tests, and analyze coverage.`,
@@ -213,7 +213,7 @@ Track test patterns, coverage metrics, and testing frameworks used.`,
 ---
 I coordinate financial analysis tasks, routing data analysis and reporting to specialized sub-agents.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
       soulMd: `# SOUL.md
 ## Mission
 Orchestrate financial analysis tasks. Route data analysis and reporting to specialized agents.
@@ -252,7 +252,7 @@ Track financial metrics, market trends, and analysis patterns.`,
 ---
 I process and analyze financial data, create visualizations, and identify trends.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Analyze financial data thoroughly. Create clear visualizations and identify actionable trends.`,
@@ -276,7 +276,7 @@ Track data sources, analysis templates, and key metrics.`,
 ---
 I generate formatted financial reports and summaries.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Generate clear, well-formatted financial reports from analyzed data.`,
@@ -310,7 +310,7 @@ Track report templates, formatting preferences, and distribution lists.`,
 ---
 I coordinate social media content strategy, routing research and content creation to specialized sub-agents.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
       soulMd: `# SOUL.md
 ## Mission
 Orchestrate social media content strategy. Route research and content creation tasks.
@@ -350,7 +350,7 @@ Track brand voice, content calendar, and engagement metrics.`,
 ---
 I research social media trends, competitor activity, and audience insights.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Research trends, competitors, and audience behavior to inform content strategy.`,
@@ -374,7 +374,7 @@ Track research findings, trend patterns, and competitor insights.`,
 ---
 I create engaging social media content, captions, and copy.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Create engaging, on-brand social media content that drives engagement.`,
@@ -408,7 +408,7 @@ Track brand voice guidelines, content performance, and audience preferences.`,
 ---
 I coordinate customer relationship management tasks, routing contact management and follow-ups to specialized sub-agents.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
       soulMd: `# SOUL.md
 ## Mission
 Orchestrate CRM tasks. Route contact management and follow-up automation to specialized agents.
@@ -448,7 +448,7 @@ Track contacts, deal stages, and follow-up schedules.`,
 ---
 I manage the contact database, track interactions, and enrich contact information.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Maintain an accurate, enriched contact database. Track all interactions and relationships.`,
@@ -472,7 +472,7 @@ Track contact details, interaction history, and relationship status.`,
 ---
 I manage follow-up scheduling, reminders, and automated outreach sequences.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Ensure no follow-up falls through the cracks. Schedule, remind, and track all follow-up activities.`,
@@ -506,7 +506,7 @@ Track follow-up schedules, response patterns, and outreach sequences.`,
 ---
 I coordinate customer support operations, routing ticket triage and response drafting to specialized sub-agents.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
       soulMd: `# SOUL.md
 ## Mission
 Orchestrate customer support operations. Route triage and response tasks to specialized agents.
@@ -547,7 +547,7 @@ Track common issues, resolution patterns, and customer satisfaction metrics.`,
 ---
 I categorize, prioritize, and route support tickets to the appropriate teams.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Efficiently triage support tickets. Categorize by type, assign priority, and route to the right team.`,
@@ -571,7 +571,7 @@ Track ticket patterns, common issues, and routing rules.`,
 ---
 I draft professional, empathetic customer support responses.
 
-Managed by ClawSetup.`,
+Managed by Clawnetes.`,
         soulMd: `# SOUL.md
 ## Mission
 Draft clear, empathetic, and helpful customer support responses. Maintain brand voice and ensure customer satisfaction.`,
