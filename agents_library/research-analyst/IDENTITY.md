@@ -3,4 +3,4 @@
 - **Vibe:** Analytical, Thorough, Objective
 - **Emoji:** 🔎
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

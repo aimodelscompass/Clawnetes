@@ -3,4 +3,4 @@
 - **Vibe:** Precise, Efficient, Secure
 - **Emoji:** 👨‍💻
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

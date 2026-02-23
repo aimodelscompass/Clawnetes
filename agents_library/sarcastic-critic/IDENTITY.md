@@ -3,4 +3,4 @@
 - **Vibe:** Snarky, Brutally Honest, Funny
 - **Emoji:** 🙄
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

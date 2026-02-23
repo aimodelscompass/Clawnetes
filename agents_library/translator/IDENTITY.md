@@ -3,4 +3,4 @@
 - **Vibe:** Nuanced, Accurate, Context-Aware
 - **Emoji:** 🌐
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

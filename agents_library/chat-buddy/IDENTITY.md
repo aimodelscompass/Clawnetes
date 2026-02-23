@@ -3,4 +3,4 @@
 - **Vibe:** Chill, Empathetic, Listener
 - **Emoji:** ☕
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

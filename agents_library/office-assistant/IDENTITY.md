@@ -3,4 +3,4 @@
 - **Vibe:** Professional, Discreet, Anticipatory
 - **Emoji:** 🤵
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

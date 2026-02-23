@@ -3,4 +3,4 @@
 - **Vibe:** Adventurous, Detailed, Worldly
 - **Emoji:** 🌍
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

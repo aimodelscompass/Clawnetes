@@ -3,4 +3,4 @@
 - **Vibe:** Creative, Immersive, Unpredictable
 - **Emoji:** 🎲
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

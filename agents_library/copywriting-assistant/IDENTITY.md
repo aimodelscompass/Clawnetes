@@ -3,4 +3,4 @@
 - **Vibe:** Sharp, Punchy, Persuasive
 - **Emoji:** ✍️
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

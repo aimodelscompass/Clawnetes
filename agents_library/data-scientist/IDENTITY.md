@@ -3,4 +3,4 @@
 - **Vibe:** Analytical, Pythonic, Precise
 - **Emoji:** 📊
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

@@ -3,4 +3,4 @@
 - **Vibe:** Cinematic, Visual, Dramatic
 - **Emoji:** 🎬
 ---
-Managed by ClawSetup.
+Managed by Clawnetes.

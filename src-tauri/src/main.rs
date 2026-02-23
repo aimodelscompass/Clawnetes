@@ -756,7 +756,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let config_json_escaped = config_json_final.replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/openclaw.json", config_json_escaped, openclaw_root))?;
 
-    // Store ClawSetup metadata in separate file on remote
+    // Store Clawnetes metadata in separate file on remote
     {
         let mut meta = serde_json::Map::new();
         if let Some(agent_type) = &config.agent_type {
@@ -772,7 +772,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
         let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
         let meta_escaped = meta_json.replace("'", "'\\''");
-        execute_ssh(&sess, &format!("echo '{}' > {}/clawsetup-meta.json", meta_escaped, openclaw_root))?;
+        execute_ssh(&sess, &format!("echo '{}' > {}/clawnetes-meta.json", meta_escaped, openclaw_root))?;
     }
 
     // auth-profiles.json
@@ -803,7 +803,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
 - **Name:** {}
 - **Emoji:** 🦞
 ---
-Managed by ClawSetup."#, config.agent_name)
+Managed by Clawnetes."#, config.agent_name)
     }).replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/IDENTITY.md", identity_md, workspace))?;
 
@@ -873,7 +873,7 @@ Serve {}."#, config.user_name)
 - **Name:** {}
 - **Emoji:** 🦞
 ---
-Managed by ClawSetup."#, agent.name)
+Managed by Clawnetes."#, agent.name)
             }).replace("'", "'\\''");
             execute_ssh(&sess, &format!("echo '{}' > {}/IDENTITY.md", a_identity, agent_workspace))?;
 
@@ -1516,13 +1516,13 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     }
 
     // NOTE: agent_type is NOT stored in openclaw.json (it's not a valid OpenClaw key).
-    // It's stored in a separate clawsetup-meta.json file for our own tracking.
+    // It's stored in a separate clawnetes-meta.json file for our own tracking.
 
     let config_json_raw = serde_json::to_string_pretty(&config_json).map_err(|e| e.to_string())?;
 
     write_file_fn(&format!("{}/openclaw.json", openclaw_root), &config_json_raw)?;
 
-    // Store ClawSetup-specific metadata in a separate file
+    // Store Clawnetes-specific metadata in a separate file
     {
         let mut meta = serde_json::Map::new();
         if let Some(agent_type) = &config.agent_type {
@@ -1537,7 +1537,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             meta.insert("memory_enabled".to_string(), serde_json::Value::Bool(true));
         }
         let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-        write_file_fn(&format!("{}/clawsetup-meta.json", openclaw_root), &meta_json)?;
+        write_file_fn(&format!("{}/clawnetes-meta.json", openclaw_root), &meta_json)?;
     }
 
     if let Some(agents) = &config.agents {
@@ -1553,7 +1553,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 - **Name:** {}
 - **Emoji:** 🦞
 ---
-Managed by ClawSetup."#, agent.name)
+Managed by Clawnetes."#, agent.name)
             });
             write_file_fn(&format!("{}/IDENTITY.md", agent_workspace), &agent_identity)?;
 
@@ -1659,7 +1659,7 @@ Serve {}."#, config.user_name)
 - **Name:** {}
 - **Emoji:** 🦞
 ---
-Managed by ClawSetup."#, config.agent_name)
+Managed by Clawnetes."#, config.agent_name)
     };
     write_file_fn(&format!("{}/IDENTITY.md", workspace), &identity_md)?;
 
@@ -2481,8 +2481,8 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         })
         .unwrap_or(false);
 
-    // Read ClawSetup metadata from separate file
-    let meta_str = read_file_content(&format!("{}/.openclaw/clawsetup-meta.json", home_dir));
+    // Read Clawnetes metadata from separate file
+    let meta_str = read_file_content(&format!("{}/.openclaw/clawnetes-meta.json", home_dir));
     let meta: serde_json::Value = serde_json::from_str(&meta_str).unwrap_or(serde_json::json!({}));
 
     // Read cron jobs from metadata
