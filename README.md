@@ -4,6 +4,10 @@
 
 Forget the terminal. Clawnetes is a friendly wizard that installs, configures, and launches your AI agent in 2 minutes.
 
+If you'd like help us achieve the dream of an AI-first Company driven by a team of AI agents powered by OpenClaw, consider donating your desired amount to support Clawnetes's development. Thank you!
+
+[Donate to help Clawnetes' development](https://buy.stripe.com/bJe3cwdjT4cyeDZdCS7wA00)
+
 ## 🚀 Supported Platforms
 
 ### macOS
