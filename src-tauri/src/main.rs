@@ -2090,51 +2090,69 @@ async fn approve_pairing(code: String, remote: Option<RemoteInfo>) -> Result<Str
 #[command]
 fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<String, String> {
     let token = if is_remote && remote.is_some() {
-        // We can't await here easily as this is a sync command, but get_remote_gateway_token is async
-        // However, we can use a blocking version or just spawn a thread. 
-        // Better: Make this command async or use the blocking ssh helper.
-        // For now, let's try to use the blocking version of ssh connect since we have one?
-        // Wait, connect_ssh is synchronous. execute_ssh is synchronous.
-        // So we can just call them.
         let r = remote.unwrap();
         let sess = connect_ssh(&r)?;
-        let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
-        let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-        json.get("gateway")
-            .and_then(|g| g.get("auth"))
-            .and_then(|a| a.get("token"))
-            .and_then(|t| t.as_str())
-            .ok_or("Could not find gateway token in remote config")?
-            .to_string()
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            let home = wsl_home_dir()?.trim().to_string();
-            let config_path = format!("{}/.openclaw/openclaw.json", home);
-            let config_str = wsl_read_file(&config_path)?;
-            let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
+        let prefix = get_env_prefix(&os_type);
 
+        let cli_token = execute_ssh(&sess, &format!("{}openclaw config get gateway.auth.token", prefix))
+            .unwrap_or_default().trim().trim_matches('"').to_string();
+
+        if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
+            cli_token
+        } else {
+            let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
+            let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
             json.get("gateway")
                 .and_then(|g| g.get("auth"))
                 .and_then(|a| a.get("token"))
                 .and_then(|t| t.as_str())
-                .ok_or("Could not find gateway token in config")?
+                .ok_or("Could not find gateway token in remote config")?
                 .to_string()
+        }
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let cli_token = wsl_root_command("openclaw config get gateway.auth.token")
+                .unwrap_or_default().trim().trim_matches('"').to_string();
+
+            if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
+                cli_token
+            } else {
+                let home = wsl_home_dir()?.trim().to_string();
+                let config_path = format!("{}/.openclaw/openclaw.json", home);
+                let config_str = wsl_read_file(&config_path)?;
+                let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+                json.get("gateway")
+                    .and_then(|g| g.get("auth"))
+                    .and_then(|a| a.get("token"))
+                    .and_then(|t| t.as_str())
+                    .ok_or("Could not find gateway token in config")?
+                    .to_string()
+            }
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            let home = dirs::home_dir().ok_or("Could not find home directory")?;
-            let config_path = home.join(".openclaw").join("openclaw.json");
-            let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-            let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+            let cli_token = shell_command("openclaw config get gateway.auth.token")
+                .unwrap_or_default().trim().trim_matches('"').to_string();
 
-            json.get("gateway")
-                .and_then(|g| g.get("auth"))
-                .and_then(|a| a.get("token"))
-                .and_then(|t| t.as_str())
-                .ok_or("Could not find gateway token in config")?
-                .to_string()
+            if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
+                cli_token
+            } else {
+                let home = dirs::home_dir().ok_or("Could not find home directory")?;
+                let config_path = home.join(".openclaw").join("openclaw.json");
+                let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+                let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+                json.get("gateway")
+                    .and_then(|g| g.get("auth"))
+                    .and_then(|a| a.get("token"))
+                    .and_then(|t| t.as_str())
+                    .ok_or("Could not find gateway token in config")?
+                    .to_string()
+            }
         }
     };
 
