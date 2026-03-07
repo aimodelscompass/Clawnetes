@@ -500,8 +500,8 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     // Skip force install if we want to preserve state
     if config.preserve_state != Some(true) {
         let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix));
-        // Remove existing config so install --force generates a fresh one
-        let _ = execute_ssh(&sess, &format!("{}rm -f {}/openclaw.json || true", nvm_prefix, openclaw_root));
+        // DO NOT remove openclaw.json. The token is tied to keychain. 
+        // install --force will scaffold missing fields while keeping the token.
         let _ = execute_ssh(&sess, &format!("{}openclaw gateway install --force --profile messaging", nvm_prefix));
         // Stop gateway immediately after install to prevent crash-loop
         // (install enables+starts the systemd service, but config lacks gateway.mode=local yet)
@@ -512,37 +512,30 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
 
     // Always preserve existing/scaffolded gateway token to avoid device token mismatch
     let gateway_token: String = {
-        let read_token_result = execute_ssh(&sess, &format!(
-            "cat {}/openclaw.json 2>/dev/null || echo '{{}}'", openclaw_root
-        ));
-        if let Ok(contents) = read_token_result {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
-                if let Some(token) = parsed.get("gateway")
-                    .and_then(|g| g.get("auth"))
-                    .and_then(|a| a.get("token"))
-                    .and_then(|t| t.as_str())
-                {
-                    token.to_string()
+        let cli_token = execute_ssh(&sess, &format!("{}openclaw config get gateway.auth.token", nvm_prefix)).unwrap_or_default().trim().trim_matches('"').to_string();
+        if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
+            cli_token
+        } else {
+            let read_token_result = execute_ssh(&sess, &format!(
+                "cat {}/openclaw.json 2>/dev/null || echo '{{}}'", openclaw_root
+            ));
+            if let Ok(contents) = read_token_result {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(token) = parsed.get("gateway")
+                        .and_then(|g| g.get("auth"))
+                        .and_then(|a| a.get("token"))
+                        .and_then(|t| t.as_str())
+                    {
+                        token.to_string()
+                    } else {
+                        rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(32).map(char::from).collect()
+                    }
                 } else {
-                    rand::thread_rng()
-                        .sample_iter(&rand::distributions::Alphanumeric)
-                        .take(32)
-                        .map(char::from)
-                        .collect()
+                    rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(32).map(char::from).collect()
                 }
             } else {
-                rand::thread_rng()
-                    .sample_iter(&rand::distributions::Alphanumeric)
-                    .take(32)
-                    .map(char::from)
-                    .collect()
+                rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(32).map(char::from).collect()
             }
-        } else {
-            rand::thread_rng()
-                .sample_iter(&rand::distributions::Alphanumeric)
-                .take(32)
-                .map(char::from)
-                .collect()
         }
     };
 
@@ -1029,6 +1022,9 @@ Serve {}."#, config.user_name)
     }
 
     // Start Gateway
+    // Run doctor --fix to auto-migrate any pairing stores and resolve schema quirks
+    let _ = execute_ssh(&sess, &format!("{}openclaw doctor --fix --yes || true", nvm_prefix));
+    
     // Reset any failed systemd state from crash-loops before starting
     let _ = execute_ssh(&sess, "systemctl --user reset-failed openclaw-gateway.service 2>/dev/null || true");
     execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix))?;
@@ -1371,8 +1367,8 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     // Run gateway install --force FIRST to scaffold, ONLY if not preserving state
     if config.preserve_state != Some(true) {
         let _ = shell_command("openclaw gateway stop");
-        // Remove existing config so install --force generates a fresh one
-        let _ = shell_command("rm -f ~/.openclaw/openclaw.json || true");
+        // DO NOT remove openclaw.json. The token is tied to keychain. 
+        // install --force will scaffold missing fields while keeping the token.
         let _ = shell_command("openclaw gateway install --force --profile messaging");
     }
 
@@ -1385,36 +1381,30 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 
     // Always preserve existing/scaffolded gateway token to avoid device token mismatch
     let gateway_token: String = {
-        let existing_config_path = format!("{}/openclaw.json", openclaw_root);
-        let contents = read_file_fn(&existing_config_path);
-        if !contents.is_empty() {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
-                if let Some(token) = parsed.get("gateway")
-                    .and_then(|g| g.get("auth"))
-                    .and_then(|a| a.get("token"))
-                    .and_then(|t| t.as_str())
-                {
-                    token.to_string()
+        // Try getting token from CLI first, since openclaw.json might be formatted weirdly
+        let cli_token = shell_command("openclaw config get gateway.auth.token").unwrap_or_default().trim().trim_matches('"').to_string();
+        if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
+            cli_token
+        } else {
+            let existing_config_path = format!("{}/openclaw.json", openclaw_root);
+            let contents = read_file_fn(&existing_config_path);
+            if !contents.is_empty() {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(token) = parsed.get("gateway")
+                        .and_then(|g| g.get("auth"))
+                        .and_then(|a| a.get("token"))
+                        .and_then(|t| t.as_str())
+                    {
+                        token.to_string()
+                    } else {
+                        rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(32).map(char::from).collect()
+                    }
                 } else {
-                    rand::thread_rng()
-                        .sample_iter(&rand::distributions::Alphanumeric)
-                        .take(32)
-                        .map(char::from)
-                        .collect()
+                    rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(32).map(char::from).collect()
                 }
             } else {
-                rand::thread_rng()
-                    .sample_iter(&rand::distributions::Alphanumeric)
-                    .take(32)
-                    .map(char::from)
-                    .collect()
+                rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(32).map(char::from).collect()
             }
-        } else {
-            rand::thread_rng()
-                .sample_iter(&rand::distributions::Alphanumeric)
-                .take(32)
-                .map(char::from)
-                .collect()
         }
     };
 
@@ -2009,6 +1999,9 @@ fn start_gateway() -> Result<String, String> {
 
     // Removed gateway install --force logic to prevent overwriting custom config.
     // Installation is now handled in configure_agent / setup_remote_openclaw.
+
+    // Run doctor --fix to auto-migrate any pairing stores and resolve schema quirks
+    let _ = shell_command("openclaw doctor --fix --yes || true");
 
     let start_output = shell_command("openclaw gateway start")?;
 
