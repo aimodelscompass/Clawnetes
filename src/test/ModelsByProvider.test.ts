@@ -50,7 +50,7 @@ describe("ModelsByProvider - New Local Providers", () => {
     });
   });
 
-  it("lmstudio models all have correct prefix", () => {
+  it("lmstudio models have provider prefix", () => {
     MODELS_BY_PROVIDER["lmstudio"].forEach(m => {
       expect(m.value.startsWith("lmstudio/")).toBe(true);
     });

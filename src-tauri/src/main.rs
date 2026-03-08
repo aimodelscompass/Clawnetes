@@ -836,6 +836,55 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
     }
 
+    // Add models.providers section for LM Studio so openclaw can resolve lmstudio/ models
+    if config.provider == "lmstudio" {
+        let base_url = config.local_base_url.as_deref().unwrap_or("http://localhost:1234");
+        let base_url_v1 = if base_url.ends_with("/v1") {
+            base_url.to_string()
+        } else {
+            format!("{}/v1", base_url.trim_end_matches('/'))
+        };
+        let model_id = if config.model.starts_with("lmstudio/") {
+            config.model.strip_prefix("lmstudio/").unwrap().to_string()
+        } else {
+            config.model.clone()
+        };
+        let mut model_ids = vec![model_id];
+        if let Some(fb) = &config.fallback_models {
+            for fb_model in fb {
+                if let Some(stripped) = fb_model.strip_prefix("lmstudio/") {
+                    if !model_ids.contains(&stripped.to_string()) {
+                        model_ids.push(stripped.to_string());
+                    }
+                }
+            }
+        }
+        let lmstudio_models: Vec<serde_json::Value> = model_ids.iter().map(|id| {
+            serde_json::json!({
+                "id": id,
+                "name": id,
+                "reasoning": false,
+                "input": ["text"],
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                "contextWindow": 131072,
+                "maxTokens": 8192
+            })
+        }).collect();
+        if let Some(obj) = config_val.as_object_mut() {
+            obj.insert("models".to_string(), serde_json::json!({
+                "mode": "merge",
+                "providers": {
+                    "lmstudio": {
+                        "baseUrl": base_url_v1,
+                        "apiKey": "lmstudio",
+                        "api": "openai-completions",
+                        "models": lmstudio_models
+                    }
+                }
+            }));
+        }
+    }
+
     let config_json_final = serde_json::to_string_pretty(&config_val).map_err(|e| e.to_string())?;
     let config_json_escaped = config_json_final.replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/openclaw.json", config_json_escaped, openclaw_root))?;
@@ -867,6 +916,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let mut primary_p = serde_json::Map::new();
     primary_p.insert("type".to_string(), serde_json::Value::String(auth_mode));
     primary_p.insert("provider".to_string(), serde_json::Value::String(config.provider.clone()));
+    if config.provider == "lmstudio" || config.provider == "local" { primary_p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
     let token = if config.provider == "ollama" || config.provider == "lmstudio" || config.provider == "local" {
         "dummy-token".to_string()
     } else {
@@ -898,6 +948,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                     let mut p = serde_json::Map::new();
                     p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
                     p.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
+                    if provider == "lmstudio" || provider == "local" { p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
                     p.insert("token".to_string(), serde_json::Value::String("dummy-token".to_string()));
                     if provider == "lmstudio" || provider == "local" {
                         if let Some(ref base_url) = config.local_base_url {
@@ -1645,17 +1696,13 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     if let Some(defaults) = config_json.get_mut("agents").and_then(|a| a.get_mut("defaults")).and_then(|d| d.as_object_mut()) {
         // Initialize dynamic model entry
         if let Some(models) = defaults.get_mut("models").and_then(|m| m.as_object_mut()) {
-            models.insert(config.model.clone(), serde_json::json!({
-                "provider": config.provider.clone()
-            }));
+            models.insert(config.model.clone(), serde_json::json!({}));
             
             // Also register fallback models so OpenClaw knows their providers
             if let Some(fb) = config.fallback_models.as_ref() {
                 for fb_model in fb {
-                    if let Some(fb_prov) = fb_model.split('/').next() {
-                        models.insert(fb_model.clone(), serde_json::json!({
-                            "provider": fb_prov
-                        }));
+                    if let Some(_fb_prov) = fb_model.split('/').next() {
+                        models.insert(fb_model.clone(), serde_json::json!({}));
                     }
                 }
             }
@@ -1737,6 +1784,57 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 
     // NOTE: agent_type is NOT stored in openclaw.json (it's not a valid OpenClaw key).
     // It's stored in a separate clawnetes-meta.json file for our own tracking.
+
+    // Add models.providers section for LM Studio so openclaw can resolve lmstudio/ models
+    if config.provider == "lmstudio" {
+        let base_url = config.local_base_url.as_deref().unwrap_or("http://localhost:1234");
+        let base_url_v1 = if base_url.ends_with("/v1") {
+            base_url.to_string()
+        } else {
+            format!("{}/v1", base_url.trim_end_matches('/'))
+        };
+        // Extract model ID by stripping the "lmstudio/" prefix
+        let model_id = if config.model.starts_with("lmstudio/") {
+            config.model.strip_prefix("lmstudio/").unwrap().to_string()
+        } else {
+            config.model.clone()
+        };
+        let mut model_ids = vec![model_id];
+        // Also register any lmstudio fallback models
+        if let Some(fb) = &config.fallback_models {
+            for fb_model in fb {
+                if let Some(stripped) = fb_model.strip_prefix("lmstudio/") {
+                    if !model_ids.contains(&stripped.to_string()) {
+                        model_ids.push(stripped.to_string());
+                    }
+                }
+            }
+        }
+        let lmstudio_models: Vec<serde_json::Value> = model_ids.iter().map(|id| {
+            serde_json::json!({
+                "id": id,
+                "name": id,
+                "reasoning": false,
+                "input": ["text"],
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                "contextWindow": 131072,
+                "maxTokens": 8192
+            })
+        }).collect();
+        if let Some(obj) = config_json.as_object_mut() {
+            obj.insert("models".to_string(), serde_json::json!({
+                "mode": "merge",
+                "providers": {
+                    "lmstudio": {
+                        "baseUrl": base_url_v1,
+                        "apiKey": "lmstudio",
+                        "api": "openai-completions",
+                        "models": lmstudio_models
+                    }
+                }
+            }));
+        }
+    }
 
     let config_json_raw = serde_json::to_string_pretty(&config_json).map_err(|e| e.to_string())?;
 
@@ -1843,6 +1941,7 @@ Serve {}."#, config.user_name)
                             let mut p = serde_json::Map::new();
                             p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
                             p.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
+                            if provider == "lmstudio" || provider == "local" { p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
                             p.insert("token".to_string(), serde_json::Value::String("dummy-token".to_string()));
                             if provider == "lmstudio" || provider == "local" {
                                 if let Some(ref base_url) = config.local_base_url {
@@ -1882,6 +1981,7 @@ Serve {}."#, config.user_name)
     let mut primary_p = serde_json::Map::new();
     primary_p.insert("type".to_string(), serde_json::Value::String(auth_mode.clone()));
     primary_p.insert("provider".to_string(), serde_json::Value::String(config.provider.clone()));
+    if config.provider == "lmstudio" || config.provider == "local" { primary_p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
     let token = if config.provider == "ollama" || config.provider == "lmstudio" || config.provider == "local" {
         "dummy-token".to_string()
     } else {
@@ -1913,6 +2013,7 @@ Serve {}."#, config.user_name)
                     let mut p = serde_json::Map::new();
                     p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
                     p.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
+                    if provider == "lmstudio" || provider == "local" { p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
                     p.insert("token".to_string(), serde_json::Value::String("dummy-token".to_string()));
                     if provider == "lmstudio" || provider == "local" {
                         if let Some(ref base_url) = config.local_base_url {
@@ -2105,67 +2206,45 @@ fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<Stri
     let token = if is_remote && remote.is_some() {
         let r = remote.unwrap();
         let sess = connect_ssh(&r)?;
-        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
-        let prefix = get_env_prefix(&os_type);
+        let _os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
 
-        let cli_token = execute_ssh(&sess, &format!("{}openclaw config get gateway.auth.token", prefix))
-            .unwrap_or_default().trim().trim_matches('"').to_string();
+        let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
+        let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        json.get("gateway")
+            .and_then(|g| g.get("auth"))
+            .and_then(|a| a.get("token"))
+            .and_then(|t| t.as_str())
+            .ok_or("Could not find gateway token in remote config")?
+            .to_string()
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let home = wsl_home_dir()?.trim().to_string();
+            let config_path = format!("{}/.openclaw/openclaw.json", home);
+            let config_str = wsl_read_file(&config_path)?;
+            let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
 
-        if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
-            cli_token
-        } else {
-            let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
-            let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
             json.get("gateway")
                 .and_then(|g| g.get("auth"))
                 .and_then(|a| a.get("token"))
                 .and_then(|t| t.as_str())
-                .ok_or("Could not find gateway token in remote config")?
+                .ok_or("Could not find gateway token in config")?
                 .to_string()
-        }
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            let cli_token = wsl_root_command("openclaw config get gateway.auth.token")
-                .unwrap_or_default().trim().trim_matches('"').to_string();
-
-            if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
-                cli_token
-            } else {
-                let home = wsl_home_dir()?.trim().to_string();
-                let config_path = format!("{}/.openclaw/openclaw.json", home);
-                let config_str = wsl_read_file(&config_path)?;
-                let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
-
-                json.get("gateway")
-                    .and_then(|g| g.get("auth"))
-                    .and_then(|a| a.get("token"))
-                    .and_then(|t| t.as_str())
-                    .ok_or("Could not find gateway token in config")?
-                    .to_string()
-            }
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            let cli_token = shell_command("openclaw config get gateway.auth.token")
-                .unwrap_or_default().trim().trim_matches('"').to_string();
+            let home = dirs::home_dir().ok_or("Could not find home directory")?;
+            let config_path = home.join(".openclaw").join("openclaw.json");
+            let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+            let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
 
-            if !cli_token.is_empty() && cli_token != "null" && cli_token != "undefined" {
-                cli_token
-            } else {
-                let home = dirs::home_dir().ok_or("Could not find home directory")?;
-                let config_path = home.join(".openclaw").join("openclaw.json");
-                let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-                let json: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
-
-                json.get("gateway")
-                    .and_then(|g| g.get("auth"))
-                    .and_then(|a| a.get("token"))
-                    .and_then(|t| t.as_str())
-                    .ok_or("Could not find gateway token in config")?
-                    .to_string()
-            }
+            json.get("gateway")
+                .and_then(|g| g.get("auth"))
+                .and_then(|a| a.get("token"))
+                .and_then(|t| t.as_str())
+                .ok_or("Could not find gateway token in config")?
+                .to_string()
         }
     };
 
