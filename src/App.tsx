@@ -159,7 +159,7 @@ function App() {
   const [thinkingLevel, setThinkingLevel] = useState("adaptive");
 
   // Messaging channel state
-  const [messagingChannel, setMessagingChannel] = useState<"none" | "telegram" | "whatsapp">("none");
+  const [messagingChannel, setMessagingChannel] = useState<"none" | "telegram" | "whatsapp">("telegram");
   const [whatsappDmPolicy, setWhatsappDmPolicy] = useState("open");
   const [whatsappPhoneNumber, setWhatsappPhoneNumber] = useState("");
   const [whatsappPhoneSubmitted, setWhatsappPhoneSubmitted] = useState(false);
@@ -552,8 +552,10 @@ Managed by Clawnetes.`,
       cron_jobs: initial.cron_jobs || null,
       local_base_url: initial.local_base_url || null,
       thinking_level: initial.thinking_level || null,
+      // WhatsApp channel
       whatsapp_enabled: initial.whatsapp_enabled || false,
       whatsapp_dm_policy: initial.whatsapp_dm_policy || null,
+      whatsapp_phone_number: initial.whatsapp_phone_number || "",
     };
   }
 
@@ -627,6 +629,7 @@ Managed by Clawnetes.`,
       // WhatsApp channel
       whatsapp_enabled: messagingChannel === "whatsapp",
       whatsapp_dm_policy: messagingChannel === "whatsapp" ? whatsappDmPolicy : null,
+      whatsapp_phone_number: messagingChannel === "whatsapp" ? whatsappPhoneNumber : null,
     };
   }
 
@@ -781,9 +784,15 @@ Managed by Clawnetes.`,
           }
         }
 
-        setProgress("Starting Gateway (this may take 20-30 seconds)...");
-        setLogs("Starting Gateway...");
-        await invoke("start_gateway");
+        if (isUpdate || messagingChannel === "whatsapp") {
+          setProgress("Restarting Gateway (this may take 20-30 seconds)...");
+          setLogs("Restarting Gateway...");
+          await invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null });
+        } else {
+          setProgress("Starting Gateway (this may take 20-30 seconds)...");
+          setLogs("Starting Gateway...");
+          await invoke("start_gateway");
+        }
 
         setProgress("Finalizing setup...");
         if (!actualIsPaired) {
@@ -1990,10 +1999,9 @@ Managed by Clawnetes.`,
             <div className="form-group">
               <label>Channel</label>
               <Dropdown
-                value={messagingChannel}
-                onChange={(v) => setMessagingChannel(v as "none" | "telegram" | "whatsapp")}
+                value={messagingChannel === "none" ? "telegram" : messagingChannel}
+                onChange={(v) => setMessagingChannel(v as "telegram" | "whatsapp")}
                 options={[
-                  { value: "none", label: "None", description: "Skip messaging channels" },
                   { value: "telegram", label: "Telegram", description: "Connect via Telegram Bot" },
                   { value: "whatsapp", label: "WhatsApp", description: "Connect via WhatsApp (QR pairing at end of setup)" },
                 ]}
@@ -2009,9 +2017,39 @@ Managed by Clawnetes.`,
             )}
 
             {messagingChannel === "whatsapp" && (
-              <p className="input-hint" style={{ marginTop: "1rem" }}>
-                WhatsApp pairing will happen at the end of setup. You'll scan a QR code to link your account.
-              </p>
+              <div style={{ marginTop: "1rem" }}>
+                <div className="form-group">
+                  <label>WhatsApp DM Policy</label>
+                  <Dropdown
+                    value={whatsappDmPolicy}
+                    onChange={setWhatsappDmPolicy}
+                    options={[
+                      { value: "allowlist", label: "Allowlist (Recommended)", description: "Only your number can interact with the bot" },
+                      { value: "open", label: "Open (Dangerous)", description: "Anyone who messages the bot can interact with it" },
+                    ]}
+                  />
+                  <p className="input-hint" style={{ marginTop: "0.25rem" }}>
+                    If you use Allowlist, enter your phone number below so the bot can reply to you.
+                  </p>
+                </div>
+
+                {whatsappDmPolicy === "allowlist" && (
+                  <div className="form-group" style={{ marginTop: "1rem" }}>
+                    <label>Your Phone Number (Allowlist)</label>
+                    <input
+                      type="text"
+                      placeholder="+1234567890"
+                      value={whatsappPhoneNumber}
+                      onChange={(e) => setWhatsappPhoneNumber(e.target.value)}
+                    />
+                    <p className="input-hint">The phone number you will use to message the bot. Include country code.</p>
+                  </div>
+                )}
+
+                <p className="input-hint" style={{ marginTop: "1rem", color: "var(--text-muted)" }}>
+                  WhatsApp pairing will happen at the end of setup. You'll scan a QR code to link your account.
+                </p>
+              </div>
             )}
 
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
@@ -3903,15 +3941,40 @@ Managed by Clawnetes.`,
                         try {
                           const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort });
                           setWhatsappQrDataUrl(qrDataUrl);
-                          // Start waiting for connection
-                          invoke("wait_whatsapp_login", { gatewayPort }).then((connected: any) => {
-                            if (connected) {
-                              setWhatsappPaired(true);
+                          const connected = await invoke("wait_whatsapp_login", { gatewayPort });
+                          if (connected) {
+                            console.log("WhatsApp linked successfully, restarting gateway to apply allowlist...");
+                            await invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null });
+                            setWhatsappPaired(true);
+                            setWhatsappQrDataUrl("");
+                          } else {
+                            // 515 recovery: creds may be saved from the scan, check & restart
+                            console.log("wait_whatsapp_login returned false, checking if creds were saved...");
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                            try {
+                              await invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null });
+                              const linked: boolean = await invoke("check_whatsapp_linked", { gatewayPort });
+                              if (linked) {
+                                console.log("WhatsApp linked after gateway restart!");
+                                setWhatsappPaired(true);
+                                setWhatsappQrDataUrl("");
+                              } else {
+                                alert("Pairing failed. Please click \"Start WhatsApp Pairing\" to try again.");
+                                setWhatsappQrDataUrl("");
+                                setWhatsappQrStep(false);
+                              }
+                            } catch (restartErr) {
+                              console.error("Gateway restart check failed:", restartErr);
+                              alert("Pairing failed. Please click \"Start WhatsApp Pairing\" to try again.");
                               setWhatsappQrDataUrl("");
+                              setWhatsappQrStep(false);
                             }
-                          }).catch(console.error);
-                        } catch (e: any) {
-                          console.error("WhatsApp QR start failed:", e);
+                          }
+                        } catch (err) {
+                          console.error(err);
+                          alert("WhatsApp pairing error: " + err);
+                          setWhatsappQrDataUrl("");
+                          setWhatsappQrStep(false);
                         }
                         setWhatsappQrLoading(false);
                       }}
@@ -3937,8 +4000,37 @@ Managed by Clawnetes.`,
                               try {
                                 const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort });
                                 setWhatsappQrDataUrl(qrDataUrl);
-                              } catch (e) {
-                                console.error("Refresh QR failed:", e);
+                                const connected = await invoke("wait_whatsapp_login", { gatewayPort });
+                                if (connected) {
+                                  console.log("WhatsApp linked successfully, restarting gateway to apply allowlist...");
+                                  await invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null });
+                                  setWhatsappPaired(true);
+                                  setWhatsappQrDataUrl("");
+                                } else {
+                                  // 515 recovery: check saved creds & restart gateway
+                                  console.log("wait_whatsapp_login returned false, checking if creds were saved...");
+                                  await new Promise(resolve => setTimeout(resolve, 3000));
+                                  try {
+                                    await invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null });
+                                    const linked: boolean = await invoke("check_whatsapp_linked", { gatewayPort });
+                                    if (linked) {
+                                      console.log("WhatsApp linked after gateway restart!");
+                                      setWhatsappPaired(true);
+                                      setWhatsappQrDataUrl("");
+                                    } else {
+                                      alert("Pairing failed. Please click \"Refresh QR\" to try again.");
+                                      setWhatsappQrDataUrl("");
+                                    }
+                                  } catch (restartErr) {
+                                    console.error("Gateway restart check failed:", restartErr);
+                                    alert("Pairing failed. Please click \"Refresh QR\" to try again.");
+                                    setWhatsappQrDataUrl("");
+                                  }
+                                }
+                              } catch (err) {
+                                console.error(err);
+                                alert("WhatsApp pairing error: " + err);
+                                setWhatsappQrDataUrl("");
                               }
                             }}
                           >

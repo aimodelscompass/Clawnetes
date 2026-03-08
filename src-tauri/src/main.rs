@@ -107,6 +107,7 @@ struct CurrentConfig {
     thinking_level: Option<String>,
     whatsapp_enabled: Option<bool>,
     whatsapp_dm_policy: Option<String>,
+    whatsapp_phone_number: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -158,6 +159,7 @@ struct AgentConfig {
     // WhatsApp channel
     whatsapp_enabled: Option<bool>,
     whatsapp_dm_policy: Option<String>,
+    whatsapp_phone_number: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -769,30 +771,37 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
             // Merge channels
             let channels_entry = obj.entry("channels".to_string()).or_insert(serde_json::json!({}));
             if let Some(channels_obj) = channels_entry.as_object_mut() {
-                let mut whatsapp_account = if dm_policy == "open" {
-                    serde_json::json!({
-                        "dmPolicy": dm_policy,
-                        "allowFrom": ["*"]
-                    })
-                } else {
-                    serde_json::json!({
-                        "dmPolicy": dm_policy
-                    })
-                };
-                
-                if dm_policy == "allowlist" {
-                    if let Some(existing) = whatsapp_allow_from.clone() {
-                        if let Some(w) = whatsapp_account.as_object_mut() {
+                let mut whatsapp_obj = serde_json::json!({
+                    "enabled": true,
+                    "selfChatMode": true,
+                    "dmPolicy": dm_policy,
+                    "groupPolicy": "allowlist",
+                    "debounceMs": 0,
+                    "mediaMaxMb": 50
+                });
+
+                if dm_policy == "open" {
+                    if let Some(w) = whatsapp_obj.as_object_mut() {
+                        w.insert("allowFrom".to_string(), serde_json::json!(["*"]));
+                    }
+                } else if dm_policy == "allowlist" {
+                    if let Some(mut existing) = whatsapp_allow_from.clone() {
+                        if let Some(ref phone) = config.whatsapp_phone_number {
+                            let formatted_phone = if phone.starts_with('+') { phone.clone() } else { format!("+{}", phone) };
+                            existing = serde_json::json!([formatted_phone]);
+                        }
+                        if let Some(w) = whatsapp_obj.as_object_mut() {
                             w.insert("allowFrom".to_string(), existing);
+                        }
+                    } else if let Some(ref phone) = config.whatsapp_phone_number {
+                        let formatted_phone = if phone.starts_with('+') { phone.clone() } else { format!("+{}", phone) };
+                        if let Some(w) = whatsapp_obj.as_object_mut() {
+                            w.insert("allowFrom".to_string(), serde_json::json!([formatted_phone]));
                         }
                     }
                 }
                 
-                channels_obj.insert("whatsapp".to_string(), serde_json::json!({
-                    "accounts": {
-                        "default": whatsapp_account
-                    }
-                }));
+                channels_obj.insert("whatsapp".to_string(), whatsapp_obj);
             }
         }
     }
@@ -1536,48 +1545,71 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         agents_list.insert(0, main_obj);
     }
 
-    let mut config_json = serde_json::json!({
-        "messages": {
-            "ackReactionScope": "group-mentions"
-        },
-        "agents": {
-            "defaults": {
-                "maxConcurrent": 4,
-                "subagents": {
-                    "maxConcurrent": 8
-                },
-                "compaction": {
-                    "mode": "safeguard"
-                },
-                "workspace": workspace,
-                "model": {
-                    "primary": config.model
-                },
-                "models": {}
-            },
-            "list": agents_list
-        },
-        "gateway": {
-            "mode": "local",
-            "port": gateway_port,
-            "bind": gateway_bind,
-            "auth": {
+    let existing_config = {
+        let path = format!("{}/openclaw.json", openclaw_root);
+        let contents = read_file_fn(&path);
+        if !contents.is_empty() {
+            serde_json::from_str::<serde_json::Value>(&contents).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        }
+    };
+
+    let mut config_json = existing_config.clone();
+    
+    // Deep merge top-level keys
+    if let Some(obj) = config_json.as_object_mut() {
+        // Messages
+        let messages_entry = obj.entry("messages".to_string()).or_insert(serde_json::json!({}));
+        if let Some(m) = messages_entry.as_object_mut() {
+            m.insert("ackReactionScope".to_string(), serde_json::json!("group-mentions"));
+        }
+
+        // Agents
+        let agents_entry = obj.entry("agents".to_string()).or_insert(serde_json::json!({
+            "defaults": { "models": {} }
+        }));
+        if let Some(a) = agents_entry.as_object_mut() {
+            let defaults = a.entry("defaults".to_string()).or_insert(serde_json::json!({ "models": {} }));
+            if let Some(d) = defaults.as_object_mut() {
+                d.insert("maxConcurrent".to_string(), serde_json::json!(4));
+                d.insert("subagents".to_string(), serde_json::json!({ "maxConcurrent": 8 }));
+                d.insert("compaction".to_string(), serde_json::json!({ "mode": "safeguard" }));
+                d.insert("workspace".to_string(), serde_json::json!(workspace));
+                d.insert("model".to_string(), serde_json::json!({ "primary": config.model }));
+            }
+            a.insert("list".to_string(), serde_json::json!(agents_list));
+        }
+
+        // Gateway
+        let gateway_entry = obj.entry("gateway".to_string()).or_insert(serde_json::json!({}));
+        if let Some(g) = gateway_entry.as_object_mut() {
+            g.insert("mode".to_string(), serde_json::json!("local"));
+            g.insert("port".to_string(), serde_json::json!(gateway_port));
+            g.insert("bind".to_string(), serde_json::json!(gateway_bind));
+            g.insert("auth".to_string(), serde_json::json!({
                 "mode": gateway_auth_mode,
                 "token": gateway_token
-            },
-            "tailscale": {
+            }));
+            g.insert("tailscale".to_string(), serde_json::json!({
                 "mode": tailscale_mode,
                 "resetOnExit": false
-            }
-        },
-        "auth": {
-            "profiles": {}
-        },
-        "commands": {
-            "native": "auto",
-            "nativeSkills": "auto"
+            }));
         }
-    });
+
+        // Auth
+        let auth_entry = obj.entry("auth".to_string()).or_insert(serde_json::json!({}));
+        if let Some(a) = auth_entry.as_object_mut() {
+            a.entry("profiles".to_string()).or_insert(serde_json::json!({}));
+        }
+
+        // Commands
+        let commands_entry = obj.entry("commands".to_string()).or_insert(serde_json::json!({}));
+        if let Some(c) = commands_entry.as_object_mut() {
+            c.insert("native".to_string(), serde_json::json!("auto"));
+            c.insert("nativeSkills".to_string(), serde_json::json!("auto"));
+        }
+    }
 
     // Add Telegram config inline (avoids hot-reload conflicts from openclaw config set)
     if let Some(ref token) = config.telegram_token {
@@ -1631,43 +1663,45 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             // Merge channels (may already have telegram)
             let channels_entry = obj.entry("channels".to_string()).or_insert(serde_json::json!({}));
             if let Some(channels_obj) = channels_entry.as_object_mut() {
-                let mut whatsapp_account = if dm_policy == "open" {
-                    serde_json::json!({
-                        "dmPolicy": dm_policy,
-                        "allowFrom": ["*"]
-                    })
-                } else {
-                    serde_json::json!({
-                        "dmPolicy": dm_policy
-                    })
-                };
-                
-                if dm_policy == "allowlist" {
-                    let existing_wa_allow = {
+                let mut whatsapp_obj = serde_json::json!({
+                    "enabled": true,
+                    "selfChatMode": true,
+                    "dmPolicy": dm_policy,
+                    "groupPolicy": "allowlist",
+                    "debounceMs": 0,
+                    "mediaMaxMb": 50
+                });
+
+                if dm_policy == "open" {
+                    if let Some(w) = whatsapp_obj.as_object_mut() {
+                        w.insert("allowFrom".to_string(), serde_json::json!(["*"]));
+                    }
+                } else if dm_policy == "allowlist" {
+                    let mut existing_wa_allow = {
                         let existing_config_path = format!("{}/openclaw.json", openclaw_root);
                         let contents = read_file_fn(&existing_config_path);
                         if !contents.is_empty() {
                             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
                                 parsed.get("channels")
                                     .and_then(|c| c.get("whatsapp"))
-                                    .and_then(|t| t.get("accounts"))
-                                    .and_then(|a| a.get("default"))
-                                    .and_then(|d| d.get("allowFrom"))
+                                    .and_then(|w| w.get("allowFrom"))
                                     .cloned()
                             } else { None }
                         } else { None }
                     };
+                    
+                    if let Some(ref phone) = config.whatsapp_phone_number {
+                        let formatted_phone = if phone.starts_with('+') { phone.clone() } else { format!("+{}", phone) };
+                        existing_wa_allow = Some(serde_json::json!([formatted_phone]));
+                    }
+
                     if let Some(existing) = existing_wa_allow {
-                        if let Some(w) = whatsapp_account.as_object_mut() {
+                        if let Some(w) = whatsapp_obj.as_object_mut() {
                             w.insert("allowFrom".to_string(), existing);
                         }
                     }
                 }
-                channels_obj.insert("whatsapp".to_string(), serde_json::json!({
-                    "accounts": {
-                        "default": whatsapp_account
-                    }
-                }));
+                channels_obj.insert("whatsapp".to_string(), whatsapp_obj);
             }
         }
     }
@@ -2943,6 +2977,13 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         thinking_level,
         whatsapp_enabled: Some(whatsapp_enabled),
         whatsapp_dm_policy,
+        whatsapp_phone_number: oc_config.get("channels")
+            .and_then(|c| c.get("whatsapp"))
+            .and_then(|w| w.get("allowFrom"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }
 
@@ -3075,16 +3116,77 @@ fn validate_openclaw_config(remote: Option<RemoteInfo>, is_wsl: Option<bool>) ->
 async fn start_whatsapp_login(gateway_port: u16) -> Result<String, String> {
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::protocol::Message;
+    use futures_util::{StreamExt, SinkExt};
 
     let url = format!("ws://127.0.0.1:{}", gateway_port);
     let (mut ws_stream, _) = connect_async(&url).await
         .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
+    let connect_req_id = uuid::Uuid::new_v4().to_string();
+    let mut connect_msg = serde_json::json!({
+        "type": "req",
+        "id": connect_req_id,
+        "method": "connect",
+        "params": {
+            "client": {
+                "id": "gateway-client",
+                "version": "1.0",
+                "platform": std::env::consts::OS,
+                "mode": "backend"
+            },
+            "minProtocol": 3,
+            "maxProtocol": 3,
+            "role": "operator",
+            "scopes": ["operator.admin"]
+        }
+    });
+
+    let home_dir = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let openclaw_json_str = std::fs::read_to_string(format!("{}/.openclaw/openclaw.json", home_dir)).unwrap_or_default();
+    if let Ok(oc_config) = serde_json::from_str::<serde_json::Value>(&openclaw_json_str) {
+        if let Some(token) = oc_config.get("gateway").and_then(|g| g.get("auth")).and_then(|a| a.get("token")).and_then(|v| v.as_str()) {
+            if let Some(params) = connect_msg.get_mut("params").and_then(|p| p.as_object_mut()) {
+                params.insert("auth".to_string(), serde_json::json!({ "token": token }));
+            }
+        }
+    }
+
+    ws_stream.send(Message::Text(connect_msg.to_string())).await
+        .map_err(|e| format!("WebSocket send connect failed: {}", e))?;
+
+    let mut handshake_ok = false;
+    while let Some(msg) = ws_stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+                if val.get("id").and_then(|v| v.as_str()) == Some(&connect_req_id) {
+                    if val.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                        handshake_ok = true;
+                        break;
+                    } else {
+                        return Err(format!("Gateway connect handshake failed: {}", text));
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => return Err("WebSocket closed during handshake".to_string()),
+            Err(e) => return Err(format!("WebSocket error during handshake: {}", e)),
+            _ => {}
+        }
+    }
+
+    if !handshake_ok {
+        return Err("Gateway connect handshake failed".to_string());
+    }
+
     let request_id = uuid::Uuid::new_v4().to_string();
     let rpc_msg = serde_json::json!({
+        "type": "req",
         "id": request_id,
         "method": "web.login.start",
-        "params": { "timeoutMs": 30000 }
+        "params": { 
+            "timeoutMs": 30000,
+            "force": true
+        }
     });
 
     ws_stream.send(Message::Text(rpc_msg.to_string())).await
@@ -3096,13 +3198,14 @@ async fn start_whatsapp_login(gateway_port: u16) -> Result<String, String> {
             Ok(Message::Text(text)) => {
                 let val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
                 if val.get("id").and_then(|v| v.as_str()) == Some(&request_id) {
-                    if let Some(qr) = val.get("result")
-                        .and_then(|r| r.get("qrDataUrl"))
-                        .and_then(|v| v.as_str())
-                    {
-                        return Ok(qr.to_string());
-                    }
-                    if let Some(err) = val.get("error") {
+                    if val.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        if let Some(qr) = val.get("payload")
+                            .and_then(|r| r.get("qrDataUrl"))
+                            .and_then(|v| v.as_str())
+                        {
+                            return Ok(qr.to_string());
+                        }
+                    } else if let Some(err) = val.get("error") {
                         return Err(format!("Gateway error: {}", err));
                     }
                 }
@@ -3120,13 +3223,71 @@ async fn start_whatsapp_login(gateway_port: u16) -> Result<String, String> {
 async fn wait_whatsapp_login(gateway_port: u16) -> Result<bool, String> {
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::protocol::Message;
+    use futures_util::{StreamExt, SinkExt};
 
     let url = format!("ws://127.0.0.1:{}", gateway_port);
     let (mut ws_stream, _) = connect_async(&url).await
         .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
+    let connect_req_id = uuid::Uuid::new_v4().to_string();
+    let mut connect_msg = serde_json::json!({
+        "type": "req",
+        "id": connect_req_id,
+        "method": "connect",
+        "params": {
+            "client": {
+                "id": "gateway-client",
+                "version": "1.0",
+                "platform": std::env::consts::OS,
+                "mode": "backend"
+            },
+            "minProtocol": 3,
+            "maxProtocol": 3,
+            "role": "operator",
+            "scopes": ["operator.admin"]
+        }
+    });
+
+    let home_dir = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let openclaw_json_str = std::fs::read_to_string(format!("{}/.openclaw/openclaw.json", home_dir)).unwrap_or_default();
+    if let Ok(oc_config) = serde_json::from_str::<serde_json::Value>(&openclaw_json_str) {
+        if let Some(token) = oc_config.get("gateway").and_then(|g| g.get("auth")).and_then(|a| a.get("token")).and_then(|v| v.as_str()) {
+            if let Some(params) = connect_msg.get_mut("params").and_then(|p| p.as_object_mut()) {
+                params.insert("auth".to_string(), serde_json::json!({ "token": token }));
+            }
+        }
+    }
+
+    ws_stream.send(Message::Text(connect_msg.to_string())).await
+        .map_err(|e| format!("WebSocket send connect failed: {}", e))?;
+
+    let mut handshake_ok = false;
+    while let Some(msg) = ws_stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+                if val.get("id").and_then(|v| v.as_str()) == Some(&connect_req_id) {
+                    if val.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                        handshake_ok = true;
+                        break;
+                    } else {
+                        return Err(format!("Gateway connect handshake failed: {}", text));
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => return Err("WebSocket closed during handshake".to_string()),
+            Err(e) => return Err(format!("WebSocket error during handshake: {}", e)),
+            _ => {}
+        }
+    }
+
+    if !handshake_ok {
+        return Err("Gateway connect handshake failed".to_string());
+    }
+
     let request_id = uuid::Uuid::new_v4().to_string();
     let rpc_msg = serde_json::json!({
+        "type": "req",
         "id": request_id,
         "method": "web.login.wait",
         "params": { "timeoutMs": 120000 }
@@ -3143,11 +3304,15 @@ async fn wait_whatsapp_login(gateway_port: u16) -> Result<bool, String> {
                     Ok(Message::Text(text)) => {
                         let val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
                         if val.get("id").and_then(|v| v.as_str()) == Some(&request_id) {
-                            let connected = val.get("result")
-                                .and_then(|r| r.get("connected"))
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            return Ok(connected);
+                            if val.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                let connected = val.get("payload")
+                                    .and_then(|r| r.get("connected"))
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                return Ok(connected);
+                            } else if let Some(err) = val.get("error") {
+                                return Err(format!("Gateway error: {}", err));
+                            }
                         }
                     }
                     Ok(Message::Close(_)) => break,
@@ -3163,6 +3328,142 @@ async fn wait_whatsapp_login(gateway_port: u16) -> Result<bool, String> {
         Ok(result) => result,
         Err(_) => Err("WhatsApp login wait timed out".to_string()),
     }
+}
+#[command]
+async fn wipe_whatsapp_session() -> Result<(), String> {
+    let home_dir = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let session_dir = format!("{}/.openclaw/credentials/whatsapp/default", home_dir);
+    if std::path::Path::new(&session_dir).exists() {
+        std::fs::remove_dir_all(&session_dir).map_err(|e| format!("Failed to delete whatsapp session: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Check if WhatsApp creds are saved by calling web.login.start WITHOUT force.
+/// If creds exist, OpenClaw returns ok:true with no qrDataUrl ("already linked").
+#[command]
+async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::protocol::Message;
+    use futures_util::{StreamExt, SinkExt};
+
+    let url = format!("ws://127.0.0.1:{}", gateway_port);
+    let (mut ws_stream, _) = connect_async(&url).await
+        .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+
+    // Connect handshake
+    let connect_req_id = uuid::Uuid::new_v4().to_string();
+    let mut connect_msg = serde_json::json!({
+        "type": "req",
+        "id": connect_req_id,
+        "method": "connect",
+        "params": {
+            "client": {
+                "id": "gateway-client",
+                "version": "1.0",
+                "platform": std::env::consts::OS,
+                "mode": "backend"
+            },
+            "minProtocol": 3,
+            "maxProtocol": 3,
+            "role": "operator",
+            "scopes": ["operator.admin"]
+        }
+    });
+
+    let home_dir = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let openclaw_json_str = std::fs::read_to_string(format!("{}/.openclaw/openclaw.json", home_dir)).unwrap_or_default();
+    if let Ok(oc_config) = serde_json::from_str::<serde_json::Value>(&openclaw_json_str) {
+        if let Some(token) = oc_config.get("gateway").and_then(|g| g.get("auth")).and_then(|a| a.get("token")).and_then(|v| v.as_str()) {
+            if let Some(params) = connect_msg.get_mut("params").and_then(|p| p.as_object_mut()) {
+                params.insert("auth".to_string(), serde_json::json!({ "token": token }));
+            }
+        }
+    }
+
+    ws_stream.send(Message::Text(connect_msg.to_string())).await
+        .map_err(|e| format!("WebSocket send connect failed: {}", e))?;
+
+    // Wait for handshake response
+    while let Some(msg) = ws_stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+                if val.get("id").and_then(|v| v.as_str()) == Some(&connect_req_id) {
+                    if val.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                        break;
+                    } else {
+                        return Err(format!("Gateway handshake failed: {}", text));
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => return Err("WebSocket closed during handshake".to_string()),
+            Err(e) => return Err(format!("WebSocket error: {}", e)),
+            _ => {}
+        }
+    }
+
+    // Call web.login.start WITHOUT force — if creds exist, returns "already linked" with no QR
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let rpc_msg = serde_json::json!({
+        "type": "req",
+        "id": request_id,
+        "method": "web.login.start",
+        "params": { "timeoutMs": 10000 }
+    });
+
+    ws_stream.send(Message::Text(rpc_msg.to_string())).await
+        .map_err(|e| format!("WebSocket send failed: {}", e))?;
+
+    let timeout = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        async {
+            while let Some(msg) = ws_stream.next().await {
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        let val: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+                        if val.get("id").and_then(|v| v.as_str()) == Some(&request_id) {
+                            if val.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                // If no qrDataUrl → creds exist, already linked
+                                let has_qr = val.get("payload")
+                                    .and_then(|r| r.get("qrDataUrl"))
+                                    .and_then(|v| v.as_str())
+                                    .is_some();
+                                return Ok(!has_qr);
+                            } else {
+                                return Ok(false);
+                            }
+                        }
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Err(e) => return Err(format!("WebSocket error: {}", e)),
+                    _ => {}
+                }
+            }
+            Ok(false)
+        }
+    ).await;
+
+    match timeout {
+        Ok(result) => result,
+        Err(_) => Ok(false),
+    }
+}
+
+#[command]
+async fn restart_openclaw_gateway(remote: Option<RemoteInfo>) -> Result<(), String> {
+    if let Some(r) = remote {
+        let sess = connect_ssh(&r)?;
+        let nvm_prefix = get_env_prefix(&execute_ssh(&sess, "uname -s")?.trim().to_string());
+        execute_ssh(&sess, &format!("{}openclaw gateway restart", nvm_prefix))?;
+    } else {
+        match shell_command("openclaw gateway restart") {
+            Ok(_) => {},
+            Err(e) => return Err(format!("Gateway restart failed: {}", e))
+        }
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    Ok(())
 }
 
 fn main() {
@@ -3205,7 +3506,10 @@ fn main() {
             get_lmstudio_models,
             validate_openclaw_config,
             start_whatsapp_login,
-            wait_whatsapp_login
+            wait_whatsapp_login,
+            wipe_whatsapp_session,
+            check_whatsapp_linked,
+            restart_openclaw_gateway
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
