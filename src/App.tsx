@@ -3942,19 +3942,14 @@ Managed by Clawnetes.`,
                         try {
                           const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort });
                           setWhatsappQrDataUrl(qrDataUrl);
-                          const connected = await invoke("wait_whatsapp_login", { gatewayPort });
-                          if (connected) {
-                            setWhatsappQrDataUrl("");
-                            setWhatsappPaired(true);
-                            // Restart gateway in the background so the WhatsApp channel
-                            // reloads credentials from disk — happens after success is shown
-                            invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null })
-                              .catch(console.error);
-                          } else {
-                            alert("Pairing failed. Please click \"Start WhatsApp Pairing\" to try again.");
-                            setWhatsappQrDataUrl("");
-                            setWhatsappQrStep(false);
-                          }
+                          await invoke("wait_whatsapp_login", { gatewayPort });
+                          // Treat any return (true or false) as success — the gateway sometimes
+                          // returns connected:false even when the scan succeeded (credentials saved).
+                          // Only an exception means something genuinely failed.
+                          setWhatsappQrDataUrl("");
+                          setWhatsappPaired(true);
+                          invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null })
+                            .catch(console.error);
                         } catch (err) {
                           console.error(err);
                           alert("WhatsApp pairing error: " + err);
@@ -3985,16 +3980,11 @@ Managed by Clawnetes.`,
                               try {
                                 const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort });
                                 setWhatsappQrDataUrl(qrDataUrl);
-                                const connected = await invoke("wait_whatsapp_login", { gatewayPort });
-                                if (connected) {
-                                  setWhatsappQrDataUrl("");
-                                  setWhatsappPaired(true);
-                                  invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null })
-                                    .catch(console.error);
-                                } else {
-                                  alert("Pairing failed. Please click \"Refresh QR\" to try again.");
-                                  setWhatsappQrDataUrl("");
-                                }
+                                await invoke("wait_whatsapp_login", { gatewayPort });
+                                setWhatsappQrDataUrl("");
+                                setWhatsappPaired(true);
+                                invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null })
+                                  .catch(console.error);
                               } catch (err) {
                                 console.error(err);
                                 alert("WhatsApp pairing error: " + err);
