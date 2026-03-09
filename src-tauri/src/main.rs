@@ -1088,6 +1088,19 @@ Serve {}."#, config.user_name)
     execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix))?;
     execute_ssh(&sess, &format!("{}openclaw gateway start", nvm_prefix))?;
 
+    // Initialize web UI sessions for sub-agents (best-effort)
+    if let Some(agents) = &config.agents {
+        thread::sleep(Duration::from_secs(3));
+        for agent in agents {
+            if agent.id == "main" {
+                continue;
+            }
+            let cmd = format!("{}openclaw agent --agent {} --message 'hello' 2>/dev/null || true", nvm_prefix, agent.id);
+            let _ = execute_ssh(&sess, &cmd);
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+
     Ok(gateway_token)
 }
 
@@ -2118,6 +2131,21 @@ Serve {}."#, config.user_name)
     write_file_fn(&format!("{}/SOUL.md", workspace), &soul_md)?;
 
     Ok("Configured.".into())
+}
+
+#[command]
+fn initialize_agent_sessions(agent_ids: Vec<String>) -> Result<String, String> {
+    let mut initialized = 0;
+    for id in &agent_ids {
+        if id == "main" {
+            continue;
+        }
+        let cmd = format!("openclaw agent --agent {} --message \"hello\" 2>/dev/null || true", id);
+        let _ = shell_command(&cmd);
+        thread::sleep(Duration::from_millis(500));
+        initialized += 1;
+    }
+    Ok(format!("Initialized {} agent sessions", initialized))
 }
 
 #[command]
@@ -3624,7 +3652,8 @@ fn main() {
             wait_whatsapp_login,
             wipe_whatsapp_session,
             check_whatsapp_linked,
-            restart_openclaw_gateway
+            restart_openclaw_gateway,
+            initialize_agent_sessions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

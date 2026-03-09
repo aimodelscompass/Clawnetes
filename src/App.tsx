@@ -220,7 +220,7 @@ function App() {
     let newSoul = preset.soulMd;
     if (agentName) {
       newIdentity = updateIdentityField(newIdentity, "Name", agentName);
-      newSoul = updateSoulMission(newSoul, agentName);
+      newSoul = updateSoulMission(newSoul, userName || "you");
     }
     if (agentEmoji) {
       newIdentity = updateIdentityField(newIdentity, "Emoji", agentEmoji);
@@ -830,6 +830,18 @@ Managed by Clawnetes.`,
           setProgress("Starting Gateway (this may take 20-30 seconds)...");
           setLogs("Starting Gateway...");
           await invoke("start_gateway");
+        }
+
+        // Initialize web UI sessions for sub-agents after gateway starts
+        if (configPayload.agents && configPayload.agents.length > 1) {
+          setProgress("Initializing agent sessions...");
+          setLogs("Initializing agent sessions...");
+          const agentIds = configPayload.agents.map((a: any) => a.id);
+          try {
+            await invoke("initialize_agent_sessions", { agentIds });
+          } catch (e) {
+            console.warn("Agent session init failed (non-fatal):", e);
+          }
         }
 
         setProgress("Finalizing setup...");
@@ -3062,7 +3074,7 @@ Managed by Clawnetes.`,
 
                     if (updated[currentAgentConfigIdx].name) {
                       newIdentity = updateIdentityField(newIdentity, "Name", updated[currentAgentConfigIdx].name);
-                      newSoul = updateSoulMission(newSoul, updated[currentAgentConfigIdx].name);
+                      newSoul = updateSoulMission(newSoul, userName || "you");
                     }
 
                     updated[currentAgentConfigIdx].identityMd = newIdentity;
@@ -3760,7 +3772,7 @@ Managed by Clawnetes.`,
 
                     if (agentName) {
                       newIdentity = updateIdentityField(newIdentity, "Name", agentName);
-                      newSoul = updateSoulMission(newSoul, agentName);
+                      newSoul = updateSoulMission(newSoul, userName || "you");
                     }
 
                     setIdentityMd(newIdentity);
