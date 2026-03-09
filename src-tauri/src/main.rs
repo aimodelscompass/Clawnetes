@@ -629,16 +629,21 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
     }
     
+    // Determine if this is a multi-agent setup
+    let is_multi_agent = config.agents.as_ref().map(|a| a.len() > 1).unwrap_or(false);
+
     // Add sandbox config
     if let Some(sb_mode) = config.sandbox_mode.as_deref() {
         let mapped = if sb_mode == "full" { "all" } else if sb_mode == "partial" { "non-main" } else if sb_mode == "none" { "off" } else { sb_mode };
+        // In multi-agent mode, use "non-main" to ensure main agent is unrestricted
+        let effective_sandbox = if is_multi_agent && mapped == "all" { "non-main" } else { mapped };
         if let Some(obj) = defaults_obj.as_object_mut() {
-            obj.insert("sandbox".to_string(), serde_json::json!({ "mode": mapped }));
+            obj.insert("sandbox".to_string(), serde_json::json!({ "mode": effective_sandbox }));
         }
     }
 
     // defaults_json removed
-    
+
     // Build agents list
     let mut agents_list = Vec::new();
     let mut has_main = false;
@@ -648,7 +653,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
             if agent.id == "main" {
                 has_main = true;
             }
-            
+
             let mut agent_obj = serde_json::json!({
                 "id": agent.id,
                 "name": agent.name,
@@ -658,7 +663,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                     "primary": agent.model
                 }
             });
-            
+
             if let Some(fb) = &agent.fallback_models {
                 if !fb.is_empty() {
                     if let Some(model_obj) = agent_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
@@ -666,7 +671,42 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                     }
                 }
             }
-            
+
+            // In multi-agent mode: main agent gets full unrestricted access,
+            // sub-agents get the configured tool restrictions
+            if is_multi_agent {
+                if agent.id == "main" {
+                    agent_obj.as_object_mut().unwrap().insert(
+                        "tools".to_string(),
+                        serde_json::json!({ "allow": ["*"] })
+                    );
+                    agent_obj.as_object_mut().unwrap().insert(
+                        "sandbox".to_string(),
+                        serde_json::json!({ "mode": "off" })
+                    );
+                } else if let Some(tm) = config.tools_mode.as_deref() {
+                    let mut tools_obj = serde_json::Map::new();
+                    match tm {
+                        "allowlist" | "all" => {
+                            if let Some(tools) = config.allowed_tools.as_ref() {
+                                tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+                            }
+                        },
+                        "denylist" => {
+                            if let Some(tools) = config.denied_tools.as_ref() {
+                                tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
+                            }
+                        },
+                        _ => {}
+                    }
+                    if !tools_obj.is_empty() {
+                        agent_obj.as_object_mut().unwrap().insert(
+                            "tools".to_string(), serde_json::Value::Object(tools_obj)
+                        );
+                    }
+                }
+            }
+
             agents_list.push(agent_obj);
         }
     }
@@ -682,7 +722,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 "primary": config.model
             }
         });
-        
+
         if let Some(fb) = &config.fallback_models {
             if !fb.is_empty() {
                 if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
@@ -690,7 +730,19 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 }
             }
         }
-        
+
+        // If multi-agent and no explicit main in agents list, give it full access
+        if is_multi_agent {
+            main_obj.as_object_mut().unwrap().insert(
+                "tools".to_string(),
+                serde_json::json!({ "allow": ["*"] })
+            );
+            main_obj.as_object_mut().unwrap().insert(
+                "sandbox".to_string(),
+                serde_json::json!({ "mode": "off" })
+            );
+        }
+
         agents_list.insert(0, main_obj);
     }
 
@@ -805,24 +857,28 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
             }
         }
     }
-    if let Some(tm) = config.tools_mode.as_deref() {
-        let mut tools_obj = serde_json::Map::new();
-        match tm {
-            "allowlist" => {
-                if let Some(tools) = config.allowed_tools.as_ref() {
-                    tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+    // Only write global tools restriction when NOT in multi-agent mode
+    // (multi-agent uses per-agent tools config instead)
+    if !is_multi_agent {
+        if let Some(tm) = config.tools_mode.as_deref() {
+            let mut tools_obj = serde_json::Map::new();
+            match tm {
+                "allowlist" => {
+                    if let Some(tools) = config.allowed_tools.as_ref() {
+                        tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+                    }
+                },
+                "denylist" => {
+                    if let Some(tools) = config.denied_tools.as_ref() {
+                        tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
+                    }
+                },
+                _ => {}
+            }
+            if !tools_obj.is_empty() {
+                if let Some(obj) = config_val.as_object_mut() {
+                    obj.insert("tools".to_string(), serde_json::Value::Object(tools_obj));
                 }
-            },
-            "denylist" => {
-                if let Some(tools) = config.denied_tools.as_ref() {
-                    tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
-                }
-            },
-            _ => {}
-        }
-        if !tools_obj.is_empty() {
-             if let Some(obj) = config_val.as_object_mut() {
-                obj.insert("tools".to_string(), serde_json::Value::Object(tools_obj));
             }
         }
     }
@@ -1505,6 +1561,9 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     let gateway_auth_mode = config.gateway_auth_mode.as_deref().unwrap_or("token");
     let tailscale_mode = config.tailscale_mode.as_deref().unwrap_or("off");
 
+    // Determine if this is a multi-agent setup
+    let is_multi_agent = config.agents.as_ref().map(|a| a.len() > 1).unwrap_or(false);
+
     let mut agents_list = Vec::new();
     let mut has_main = false;
 
@@ -1532,6 +1591,41 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 }
             }
 
+            // In multi-agent mode: main agent gets full unrestricted access,
+            // sub-agents get the configured tool restrictions
+            if is_multi_agent {
+                if agent.id == "main" {
+                    agent_obj.as_object_mut().unwrap().insert(
+                        "tools".to_string(),
+                        serde_json::json!({ "allow": ["*"] })
+                    );
+                    agent_obj.as_object_mut().unwrap().insert(
+                        "sandbox".to_string(),
+                        serde_json::json!({ "mode": "off" })
+                    );
+                } else if let Some(tm) = config.tools_mode.as_deref() {
+                    let mut tools_obj = serde_json::Map::new();
+                    match tm {
+                        "allowlist" | "all" => {
+                            if let Some(tools) = config.allowed_tools.as_ref() {
+                                tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+                            }
+                        },
+                        "denylist" => {
+                            if let Some(tools) = config.denied_tools.as_ref() {
+                                tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
+                            }
+                        },
+                        _ => {}
+                    }
+                    if !tools_obj.is_empty() {
+                        agent_obj.as_object_mut().unwrap().insert(
+                            "tools".to_string(), serde_json::Value::Object(tools_obj)
+                        );
+                    }
+                }
+            }
+
             agents_list.push(agent_obj);
         }
     }
@@ -1553,6 +1647,18 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                     model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
                 }
             }
+        }
+
+        // If multi-agent and no explicit main in agents list, give it full access
+        if is_multi_agent {
+            main_obj.as_object_mut().unwrap().insert(
+                "tools".to_string(),
+                serde_json::json!({ "allow": ["*"] })
+            );
+            main_obj.as_object_mut().unwrap().insert(
+                "sandbox".to_string(),
+                serde_json::json!({ "mode": "off" })
+            );
         }
 
         agents_list.insert(0, main_obj);
@@ -1783,29 +1889,34 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 
         if let Some(sb_mode) = config.sandbox_mode.as_deref() {
             let mapped = if sb_mode == "full" { "all" } else if sb_mode == "partial" { "non-main" } else if sb_mode == "none" { "off" } else { sb_mode };
-            defaults.insert("sandbox".to_string(), serde_json::json!({ "mode": mapped }));
+            // In multi-agent mode, use "non-main" to ensure main agent is unrestricted
+            let effective_sandbox = if is_multi_agent && mapped == "all" { "non-main" } else { mapped };
+            defaults.insert("sandbox".to_string(), serde_json::json!({ "mode": effective_sandbox }));
         }
     }
 
     if let Some(obj) = config_json.as_object_mut() {
-        // Add tools config
-        if let Some(tm) = config.tools_mode.as_deref() {
-            let mut tools_obj = serde_json::Map::new();
-            match tm {
-                "allowlist" => {
-                    if let Some(tools) = config.allowed_tools.as_ref() {
-                        tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
-                    }
-                },
-                "denylist" => {
-                    if let Some(tools) = config.denied_tools.as_ref() {
-                        tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
-                    }
-                },
-                _ => {}
-            }
-            if !tools_obj.is_empty() {
-                obj.insert("tools".to_string(), serde_json::Value::Object(tools_obj));
+        // Only write global tools restriction when NOT in multi-agent mode
+        // (multi-agent uses per-agent tools config instead)
+        if !is_multi_agent {
+            if let Some(tm) = config.tools_mode.as_deref() {
+                let mut tools_obj = serde_json::Map::new();
+                match tm {
+                    "allowlist" => {
+                        if let Some(tools) = config.allowed_tools.as_ref() {
+                            tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+                        }
+                    },
+                    "denylist" => {
+                        if let Some(tools) = config.denied_tools.as_ref() {
+                            tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
+                        }
+                    },
+                    _ => {}
+                }
+                if !tools_obj.is_empty() {
+                    obj.insert("tools".to_string(), serde_json::Value::Object(tools_obj));
+                }
             }
         }
     }
@@ -1942,9 +2053,62 @@ Serve {}."#, config.user_name)
             // Write additional markdown files for sub-agents
             if let Some(ref tools_md) = agent.tools_md {
                 write_file_fn(&format!("{}/TOOLS.md", agent_workspace), tools_md)?;
+            } else {
+                // Auto-generate rich TOOLS.md when not explicitly provided
+                let skills_section = if let Some(skills) = &agent.skills {
+                    if !skills.is_empty() {
+                        let skill_list = skills.iter().map(|s| format!("- **{}** — invoke via `openclaw skill {}`", s, s)).collect::<Vec<_>>().join("\n");
+                        format!("\n## Available Skills\n{}\n", skill_list)
+                    } else { String::new() }
+                } else { String::new() };
+                let auto_tools_md = format!(
+                    "# TOOLS.md - Tool Usage Guide\n\
+                    {}\n\
+                    ## Usage Principles\n\
+                    - Use tools purposefully — target actions to the specific task given\n\
+                    - Document what you used in your response so the orchestrator understands your process\n\
+                    - If a tool fails, try a reasonable alternative and note the issue in your report\n\
+                    - Prefer precision over breadth: a focused action beats a scatter-shot approach\n\
+                    - Do not use tools beyond the scope of the task you were delegated\n\n\
+                    ## Output Hygiene\n\
+                    - Strip raw tool noise from your response — summarize tool results, don't dump them\n\
+                    - Quote only the relevant portion of any external source\n\
+                    - Always include timestamps or dates when reporting time-sensitive information",
+                    skills_section
+                );
+                write_file_fn(&format!("{}/TOOLS.md", agent_workspace), &auto_tools_md)?;
             }
             if let Some(ref agents_md) = agent.agents_md {
                 write_file_fn(&format!("{}/AGENTS.md", agent_workspace), agents_md)?;
+            } else {
+                // Auto-generate rich AGENTS.md for sub-agent when not explicitly provided
+                let orchestrator_name = config.agents.as_ref()
+                    .and_then(|a| a.iter().find(|x| x.id == "main"))
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| config.agent_name.clone());
+                let auto_agents_md = format!(
+                    "# AGENTS.md - Sub-Agent Context\n\n\
+                    ## Your Role\n\
+                    You are **{}**, a specialized sub-agent. You receive tasks from the orchestrating agent — \
+                    not directly from the user. Execute your assigned task and return structured results \
+                    back to the orchestrator.\n\n\
+                    ## Orchestrator\n\
+                    - **Main agent:** {} — dispatches your tasks and synthesizes your output into the final user response\n\
+                    - You do NOT decide what to do next — the orchestrator does\n\
+                    - Do NOT address the user directly unless your task explicitly involves user-facing output\n\n\
+                    ## Reporting Protocol\n\
+                    Structure every response to the orchestrator as follows:\n\
+                    1. **Result** — the direct answer or output of your task (lead with this)\n\
+                    2. **Evidence / Sources** — data, links, or tool outputs supporting the result\n\
+                    3. **Assumptions** — any decisions you made that the orchestrator should know about\n\
+                    4. **Blockers** — if you couldn't complete part of the task, say so clearly with the reason\n\n\
+                    ## Scope\n\
+                    Only handle what you were explicitly asked to do. If the task is outside your domain \
+                    or requires information you don't have, escalate back to the orchestrator rather than guessing.",
+                    agent.name,
+                    orchestrator_name
+                );
+                write_file_fn(&format!("{}/AGENTS.md", agent_workspace), &auto_agents_md)?;
             }
             if let Some(ref heartbeat_md) = agent.heartbeat_md {
                 write_file_fn(&format!("{}/HEARTBEAT.md", agent_workspace), heartbeat_md)?;
@@ -2098,13 +2262,91 @@ Managed by Clawnetes."#, config.agent_name)
     };
     write_file_fn(&format!("{}/IDENTITY.md", workspace), &identity_md)?;
 
-    // Write additional markdown files if provided
+    // Write additional markdown files if provided, or auto-generate for multi-agent setups
     if let Some(tools_md) = &config.tools_md {
         write_file_fn(&format!("{}/TOOLS.md", workspace), tools_md)?;
+    } else if is_multi_agent {
+        // Auto-generate rich TOOLS.md for orchestrator listing delegation command + direct skills
+        let mut lines = vec![
+            "# TOOLS.md - Tool Usage Guide".to_string(),
+            "".to_string(),
+            "## Agent Delegation (Primary Capability)".to_string(),
+            "As the orchestrating agent, your most powerful tool is delegating to specialized sub-agents:".to_string(),
+            "```".to_string(),
+            "openclaw agent --agent <agent-id> --message \"<specific task with full context>\"".to_string(),
+            "```".to_string(),
+            "".to_string(),
+            "**Delegation best practices:**".to_string(),
+            "- Give sub-agents specific, self-contained tasks — not the raw user message".to_string(),
+            "- Include all necessary context: relevant data, dates, links, expected output format".to_string(),
+            "- For independent tasks, dispatch multiple agents concurrently (don't chain unnecessarily)".to_string(),
+            "- After receiving sub-agent results, synthesize them before replying to the user".to_string(),
+            "- If a sub-agent errors, retry once with clarified instructions, then handle the task directly".to_string(),
+        ];
+        if let Some(skills) = &config.skills {
+            if !skills.is_empty() {
+                lines.push("".to_string());
+                lines.push("## Your Direct Skills".to_string());
+                lines.push("Use these yourself (do not delegate skill operations to sub-agents):".to_string());
+                for skill in skills {
+                    lines.push(format!("- **{}**", skill));
+                }
+            }
+        }
+        write_file_fn(&format!("{}/TOOLS.md", workspace), &lines.join("\n"))?;
     }
+
     if let Some(agents_md) = &config.agents_md {
         write_file_fn(&format!("{}/AGENTS.md", workspace), agents_md)?;
+    } else if let Some(agents) = &config.agents {
+        let sub_agents: Vec<_> = agents.iter().filter(|a| a.id != "main").collect();
+        if !sub_agents.is_empty() {
+            // Auto-generate rich AGENTS.md for the orchestrator listing all sub-agents
+            let mut lines = vec![
+                "# AGENTS.md - Sub-Agent Routing Guide".to_string(),
+                "".to_string(),
+                "## Your Role".to_string(),
+                format!("You are **{}**, the orchestrating agent. Your job is to understand user intent, \
+                delegate tasks to the right sub-agents, and synthesize their structured outputs into a \
+                coherent, unified reply for the user.", config.agent_name),
+                "".to_string(),
+                "## Available Sub-Agents".to_string(),
+                "".to_string(),
+            ];
+            for agent in &sub_agents {
+                lines.push(format!("### {} (`{}`)", agent.name, agent.id));
+                lines.push(format!("- **Model:** {}", agent.model));
+                if let Some(skills) = &agent.skills {
+                    if !skills.is_empty() {
+                        lines.push(format!("- **Skills:** {}", skills.join(", ")));
+                    }
+                }
+                // Extract role description from SOUL.md if provided
+                if let Some(soul) = &agent.soul_md {
+                    let role = soul.lines()
+                        .skip_while(|l| !l.trim_start().starts_with("## Role"))
+                        .skip(1)
+                        .find(|l| !l.trim().is_empty())
+                        .map(|l| l.trim().to_string());
+                    if let Some(r) = role {
+                        lines.push(format!("- **Role:** {}", r));
+                    }
+                }
+                lines.push("".to_string());
+            }
+            lines.push("## Delegation Protocol".to_string());
+            lines.push("```".to_string());
+            lines.push("openclaw agent --agent <agent-id> --message \"<task>\"".to_string());
+            lines.push("```".to_string());
+            lines.push("".to_string());
+            lines.push("- Give each sub-agent a specific, self-contained task with full context".to_string());
+            lines.push("- Sub-agents respond in structured markdown — parse and synthesize before replying to the user".to_string());
+            lines.push("- Dispatch independent tasks to multiple agents concurrently for efficiency".to_string());
+            lines.push("- Retry failed sub-agent tasks once, then handle directly if still failing".to_string());
+            write_file_fn(&format!("{}/AGENTS.md", workspace), &lines.join("\n"))?;
+        }
     }
+
     if let Some(heartbeat_md) = &config.heartbeat_md {
         write_file_fn(&format!("{}/HEARTBEAT.md", workspace), heartbeat_md)?;
     }
