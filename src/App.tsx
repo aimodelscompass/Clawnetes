@@ -9,8 +9,9 @@ import { AVAILABLE_SKILLS } from "./presets/availableSkills";
 import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
+import { buildReferencedProviders, createDefaultProviderAuth, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import Dropdown from "./components/Dropdown";
-import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig } from "./types";
+import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig } from "./types";
 
 function App() {
   const handleAdvancedTransition = async () => {
@@ -77,6 +78,11 @@ function App() {
 
   // Service Keys State
   const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
+  const [providerAuths, setProviderAuths] = useState<Record<string, ProviderAuthConfig>>({
+    anthropic: createDefaultProviderAuth("anthropic"),
+  });
+  const [providerAuthBusy, setProviderAuthBusy] = useState<Record<string, boolean>>({});
+  const [providerAuthErrors, setProviderAuthErrors] = useState<Record<string, string>>({});
   const [currentServiceIdx, setCurrentServiceIdx] = useState(0);
   const [isConfiguringService, setIsConfiguringService] = useState<boolean | null>(false);
 
@@ -279,13 +285,19 @@ function App() {
     }
   }, [step]);
 
-  // Update default auth method when provider changes
   useEffect(() => {
-    if (provider === "anthropic") setAuthMethod("token");
-    else if (provider === "google") setAuthMethod("token");
-    else if (provider === "openai") setAuthMethod("token");
-    else setAuthMethod("token");
+    setProviderAuths(prev => normalizeProviderAuths(prev, provider, apiKey, authMethod));
   }, [provider]);
+
+  useEffect(() => {
+    const current = providerAuths[provider] || createDefaultProviderAuth(provider);
+    if (authMethod !== current.auth_method) {
+      setAuthMethod(current.auth_method);
+    }
+    if (apiKey !== current.token) {
+      setApiKey(current.token);
+    }
+  }, [provider, providerAuths, authMethod, apiKey]);
 
   // Workspace change detection
   useEffect(() => {
@@ -295,6 +307,103 @@ function App() {
       soulMd !== initialWorkspace.soul;
     setWorkspaceModified(modified);
   }, [identityMd, userMd, soulMd, initialWorkspace]);
+
+  function updateProviderAuth(targetProvider: string, patch: Partial<ProviderAuthConfig> | ((current: ProviderAuthConfig) => ProviderAuthConfig)) {
+    setProviderAuths(prev => {
+      const current = prev[targetProvider] || createDefaultProviderAuth(targetProvider);
+      const next = typeof patch === "function" ? patch(current) : { ...current, ...patch };
+      return { ...prev, [targetProvider]: next };
+    });
+  }
+
+  function getProviderAuth(targetProvider: string): ProviderAuthConfig {
+    return providerAuths[targetProvider] || createDefaultProviderAuth(targetProvider);
+  }
+
+  async function launchProviderOAuth(targetProvider: string) {
+    const auth = getProviderAuth(targetProvider);
+    const oauthProviderId = auth.oauth_provider_id || OAUTH_METHODS_BY_PROVIDER[targetProvider]?.find(option => option.value === auth.auth_method)?.oauthProviderId;
+    if (!oauthProviderId) return;
+
+    setProviderAuthBusy(prev => ({ ...prev, [targetProvider]: true }));
+    setProviderAuthErrors(prev => ({ ...prev, [targetProvider]: "" }));
+    try {
+      const result = await invoke<ProviderAuthConfig>("start_provider_auth", {
+        provider: targetProvider,
+        method: auth.auth_method,
+        oauthProviderId,
+      });
+      updateProviderAuth(targetProvider, result);
+    } catch (e: any) {
+      setProviderAuthErrors(prev => ({ ...prev, [targetProvider]: String(e) }));
+    } finally {
+      setProviderAuthBusy(prev => ({ ...prev, [targetProvider]: false }));
+    }
+  }
+
+  function renderProviderAuthEditor(targetProvider: string) {
+    const auth = getProviderAuth(targetProvider);
+    const authOptions = getProviderAuthOptions(targetProvider);
+    const hasCredential = isOAuthMethod(auth.auth_method) ? !!auth.profile_key : !!auth.token;
+
+    return (
+      <div key={targetProvider} className="form-group" style={{ marginTop: "1rem", padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px" }}>
+        <label>{targetProvider.split("-").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")} Authentication</label>
+        <Dropdown
+          value={auth.auth_method}
+          onChange={(value) => {
+            const oauthOption = OAUTH_METHODS_BY_PROVIDER[targetProvider]?.find(option => option.value === value);
+            updateProviderAuth(targetProvider, {
+              auth_method: value,
+              oauth_provider_id: oauthOption?.oauthProviderId ?? null,
+              ...(value === "token" || value === "setup-token"
+                ? { profile_key: null, profile: null }
+                : { token: "" }),
+            });
+          }}
+          options={authOptions}
+        />
+
+        {(auth.auth_method === "token" || auth.auth_method === "setup-token") && (
+          <div style={{ marginTop: "0.75rem" }}>
+            <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+              {auth.auth_method === "setup-token" ? "Setup Token" : "API Key"}
+            </label>
+            <input
+              type="password"
+              placeholder={auth.auth_method === "setup-token" ? "Paste `claude setup-token` output" : `Paste your ${targetProvider} API key`}
+              value={auth.token}
+              onChange={(e) => updateProviderAuth(targetProvider, { token: e.target.value })}
+              autoComplete="off"
+            />
+          </div>
+        )}
+
+        {isOAuthMethod(auth.auth_method) && (
+          <div style={{ marginTop: "0.75rem" }}>
+            <button className="secondary" disabled={providerAuthBusy[targetProvider]} onClick={() => launchProviderOAuth(targetProvider)}>
+              {providerAuthBusy[targetProvider] ? "Connecting..." : "Connect with Browser"}
+            </button>
+            <p className="input-hint" style={{ marginTop: "0.5rem" }}>
+              {hasCredential ? `Imported profile ${auth.profile_key}.` : "OpenClaw will launch the provider auth flow and import the resulting profile."}
+            </p>
+          </div>
+        )}
+
+        {!hasCredential && (
+          <p className="input-hint" style={{ marginTop: "0.5rem", color: "var(--warning, #b45309)" }}>
+            Missing authentication for {targetProvider}. You can continue and configure it later, but this provider will not work until auth is supplied.
+          </p>
+        )}
+
+        {providerAuthErrors[targetProvider] && (
+          <p className="input-hint" style={{ marginTop: "0.5rem", color: "var(--danger, #dc2626)" }}>
+            {providerAuthErrors[targetProvider]}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   async function installLocalNode() {
     setInstallingNode(true);
@@ -552,6 +661,7 @@ Managed by Clawnetes.`;
       node_manager: initial.node_manager,
       skills: initial.skills || [],
       service_keys: initial.service_keys || {},
+      provider_auths: initial.provider_auths || normalizeProviderAuths({}, initial.provider, initial.api_key || "", initial.auth_method || "token"),
       sandbox_mode: mappedSandboxMode,
       tools_mode: initial.tools_mode,
       allowed_tools: initial.tools_mode === "allowlist" ? (initial.allowed_tools || []) : null,
@@ -609,8 +719,8 @@ Managed by Clawnetes.`;
 
     return {
       provider,
-      api_key: apiKey,
-      auth_method: authMethod,
+      api_key: providerAuths[provider]?.token || apiKey,
+      auth_method: providerAuths[provider]?.auth_method || authMethod,
       model,
       user_name: userName,
       agent_name: agentName,
@@ -623,6 +733,7 @@ Managed by Clawnetes.`;
       node_manager: nodeManager,
       skills: selectedSkills,
       service_keys: serviceKeys,
+      provider_auths: providerAuths,
       sandbox_mode: usePresetFields ? mappedSandboxMode : null,
       tools_mode: usePresetFields ? toolsMode : null,
       allowed_tools: usePresetFields && toolsMode === "allowlist" ? allowedTools : null,
@@ -946,6 +1057,7 @@ Managed by Clawnetes.`,
       setProvider(config.provider);
       setApiKey(config.api_key);
       setAuthMethod(config.auth_method);
+      setProviderAuths(normalizeProviderAuths(config.provider_auths, config.provider, config.api_key || "", config.auth_method || "token"));
       setModel(config.model);
       setUserName(config.user_name);
       setAgentName(config.agent_name);
@@ -1660,17 +1772,7 @@ Managed by Clawnetes.`,
             </div>
 
             <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>AI Provider API Key</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={`Enter your ${provider} API key`}
-                autoComplete="off"
-              />
-              <p className="input-hint" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }}>
-                Required for {provider}. Get one from the provider's dashboard.
-              </p>
+              {renderProviderAuthEditor(provider)}
             </div>
 
             {/* Show auth keys for skills that require them */}
@@ -1702,7 +1804,7 @@ Managed by Clawnetes.`,
               )}
 
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" disabled={!apiKey} onClick={() => setStep(9)}>Next</button>
+              <button className="primary" disabled={!LOCAL_PROVIDERS.has(provider) && !isOAuthMethod(getProviderAuth(provider).auth_method) && !getProviderAuth(provider).token} onClick={() => setStep(9)}>Next</button>
               <button className="secondary" onClick={() => setStep(6.5)}>Back</button>
             </div>
           </div>
@@ -1793,23 +1895,18 @@ Managed by Clawnetes.`,
             <div className="form-group" style={{ marginTop: "1.5rem" }}>
               <label>Auth Method</label>
               <Dropdown
-                value={authMethod}
-                onChange={setAuthMethod}
-                options={[
-                  ...(provider === "anthropic" ? [
-                    { value: "token", label: "Anthropic API Key", description: "Standard API Key starting with sk-ant-..." },
-                    { value: "setup-token", label: "Anthropic Token (from setup-token)", description: "Temporary token from CLI setup" }
-                  ] : []),
-                  ...(provider === "google" ? [
-                    { value: "token", label: "Google Gemini API Key", description: "Standard API Key" }
-                  ] : []),
-                  ...(provider === "openai" ? [
-                    { value: "token", label: "OpenAI API Key", description: "Standard API Key starting with sk-..." }
-                  ] : []),
-                  ...(!["anthropic", "google", "openai"].includes(provider) ? [
-                    { value: "token", label: "API Key (Standard)", description: "Standard API Key for this provider" }
-                  ] : [])
-                ]}
+                value={getProviderAuth(provider).auth_method}
+                onChange={(value) => {
+                  const oauthOption = OAUTH_METHODS_BY_PROVIDER[provider]?.find(option => option.value === value);
+                  updateProviderAuth(provider, {
+                    auth_method: value,
+                    oauth_provider_id: oauthOption?.oauthProviderId ?? null,
+                    ...(value === "token" || value === "setup-token"
+                      ? { profile_key: null, profile: null }
+                      : { token: "" }),
+                  });
+                }}
+                options={getProviderAuthOptions(provider)}
               />
             </div>
 
@@ -1999,20 +2096,7 @@ Managed by Clawnetes.`,
             )}
 
             {!["ollama", "lmstudio", "local"].includes(provider) && (
-              <div className="form-group" style={{ marginTop: "1.5rem" }}>
-                <label>{authMethod === "setup-token" ? "Anthropic Setup Token" : "API Key"}</label>
-                <input
-                  type="password"
-                  placeholder="Paste here..."
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-                {authMethod === "setup-token" && (
-                  <p className="input-hint">
-                    Run <code>claude setup-token</code> in your terminal and paste the result here.
-                  </p>
-                )}
-              </div>
+              renderProviderAuthEditor(provider)
             )}
 
 
@@ -2476,7 +2560,11 @@ Managed by Clawnetes.`,
             </div>
           </div>
         );
-      case 13:
+      case 13: {
+        const referencedProviders = buildReferencedProviders({
+          primaryModel: model,
+          fallbackModels: enableFallbacks ? fallbackModels.filter(Boolean) : [],
+        });
         return (
           <div className="step-view">
             <h2>Model Configuration</h2>
@@ -2546,7 +2634,6 @@ Managed by Clawnetes.`,
                 {[0, 1].map(idx => {
                   const currentModel = fallbackModels[idx] || "";
                   const currentProvider = currentModel.split('/')[0];
-                  const needsAuth = currentProvider && currentProvider !== provider && !serviceKeys[currentProvider];
 
                   return (
                     <div key={idx} className="form-group" style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px" }}>
@@ -2734,23 +2821,18 @@ Managed by Clawnetes.`,
                         </div>
                       )}
 
-                      {/* Auth Selection */}
-                      {currentModel && currentProvider && currentProvider !== provider && !["ollama", "lmstudio", "local"].includes(currentProvider) && (
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>API Key for {currentProvider}</label>
-                          <input
-                            type="password"
-                            placeholder={`API Key for ${currentProvider}`}
-                            value={serviceKeys[currentProvider] || ""}
-                            onChange={(e) => setServiceKeys({ ...serviceKeys, [currentProvider]: e.target.value })}
-                            autoComplete="off"
-                          />
-                        </div>
-                      )}
                     </div>
                   );
                 })}
               </>
+            )}
+
+            {referencedProviders.length > 0 && (
+              <div style={{ marginTop: "1.5rem" }}>
+                <h3 style={{ marginBottom: "0.5rem" }}>Provider Authentication</h3>
+                <p className="step-description">Configure auth once for every remote provider referenced by the primary or fallback models.</p>
+                {referencedProviders.map(targetProvider => renderProviderAuthEditor(targetProvider))}
+              </div>
             )}
 
             <div className="button-group">
@@ -2759,6 +2841,7 @@ Managed by Clawnetes.`,
             </div>
           </div>
         );
+      }
       case 14:
         return (
           <div className="step-view">
@@ -2984,6 +3067,10 @@ Managed by Clawnetes.`,
         }
         const currentAgent = agentConfigs[currentAgentConfigIdx];
         const currentAgentProvider = currentAgent.model.split('/')[0];
+        const currentAgentReferencedProviders = buildReferencedProviders({
+          primaryModel: currentAgent.model,
+          fallbackModels: currentAgent.fallbackModels || [],
+        });
 
         // Core tools for allowed tools selection
         const coreTools = [
@@ -3206,18 +3293,6 @@ Managed by Clawnetes.`,
                   <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setLocalBaseUrl(e.target.value)} />
                 </div>
               )}
-              {currentAgentProvider && currentAgentProvider !== provider && !serviceKeys[currentAgentProvider] && !["ollama", "lmstudio", "local"].includes(currentAgentProvider) && (
-                <div style={{ marginTop: "0.5rem" }}>
-                  <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>API Key for {currentAgentProvider}</label>
-                  <input
-                    type="password"
-                    placeholder={`API Key for ${currentAgentProvider}`}
-                    value={serviceKeys[currentAgentProvider] || ""}
-                    onChange={(e) => setServiceKeys({ ...serviceKeys, [currentAgentProvider]: e.target.value })}
-                    autoComplete="off"
-                  />
-                </div>
-              )}
             </div>
 
             <div className="form-group" style={{ padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px", marginBottom: "1rem" }}>
@@ -3286,22 +3361,18 @@ Managed by Clawnetes.`,
                         <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setLocalBaseUrl(e.target.value)} />
                       </div>
                     )}
-                    {currentFallbackProvider && currentFallbackProvider !== provider && currentFallbackProvider !== currentAgentProvider && !serviceKeys[currentFallbackProvider] && !["ollama", "lmstudio", "local"].includes(currentFallbackProvider) && (
-                      <div style={{ marginTop: "0.5rem" }}>
-                        <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>API Key for {currentFallbackProvider}</label>
-                        <input
-                          type="password"
-                          placeholder={`API Key for ${currentFallbackProvider}`}
-                          value={serviceKeys[currentFallbackProvider] || ""}
-                          onChange={(e) => setServiceKeys({ ...serviceKeys, [currentFallbackProvider]: e.target.value })}
-                          autoComplete="off"
-                        />
-                      </div>
-                    )}
                   </>
                 );
               })()}
             </div>
+
+            {currentAgentReferencedProviders.length > 0 && (
+              <div style={{ marginBottom: "1rem" }}>
+                <h3 style={{ marginBottom: "0.5rem" }}>Provider Authentication</h3>
+                <p className="step-description">Configure auth once for the remote providers used by this agent.</p>
+                {currentAgentReferencedProviders.map(targetProvider => renderProviderAuthEditor(targetProvider))}
+              </div>
+            )}
 
             <div className="form-group">
               <label>Skills</label>

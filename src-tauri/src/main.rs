@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rand::Rng;
 use ssh2::Session;
 use std::path::Path;
-use futures_util::{SinkExt, StreamExt};
 
 
 #[macro_use]
@@ -84,6 +83,7 @@ struct CurrentConfig {
     node_manager: String,
     skills: Vec<String>,
     service_keys: std::collections::HashMap<String, String>,
+    provider_auths: std::collections::HashMap<String, ProviderAuthData>,
     sandbox_mode: String,
     tools_mode: String,
     allowed_tools: Vec<String>,
@@ -110,6 +110,15 @@ struct CurrentConfig {
     whatsapp_phone_number: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct ProviderAuthData {
+    auth_method: String,
+    token: String,
+    profile_key: Option<String>,
+    profile: Option<serde_json::Value>,
+    oauth_provider_id: Option<String>,
+}
+
 #[derive(serde::Deserialize)]
 struct AgentConfig {
     provider: String,
@@ -128,7 +137,9 @@ struct AgentConfig {
     tailscale_mode: Option<String>,
     node_manager: Option<String>,
     skills: Option<Vec<String>>,
+    #[allow(dead_code)]
     service_keys: Option<std::collections::HashMap<String, String>>,
+    provider_auths: Option<std::collections::HashMap<String, ProviderAuthData>>,
     // NEW: Enhanced advanced fields
     sandbox_mode: Option<String>,
     tools_mode: Option<String>,
@@ -176,6 +187,179 @@ struct RemoteInfo {
     user: String,
     password: Option<String>,
     private_key_path: Option<String>,
+}
+
+fn default_provider_auth(provider: &str, api_key: &str, auth_method: &str, base_url: Option<&String>) -> ProviderAuthData {
+    let mut profile = serde_json::Map::new();
+    let auth_type = if auth_method == "setup-token" {
+        "token".to_string()
+    } else if auth_method == "antigravity" || auth_method == "gemini_cli" || auth_method == "codex" {
+        "oauth".to_string()
+    } else {
+        auth_method.to_string()
+    };
+    let token = if provider == "ollama" || provider == "lmstudio" || provider == "local" {
+        "dummy-token".to_string()
+    } else {
+        api_key.to_string()
+    };
+
+    profile.insert("type".to_string(), serde_json::Value::String(auth_type.clone()));
+    profile.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
+    if provider == "lmstudio" || provider == "local" {
+        profile.insert("api".to_string(), serde_json::Value::String("openai".to_string()));
+    }
+    if auth_type == "oauth" {
+        profile.insert("access".to_string(), serde_json::Value::String(token.clone()));
+    } else {
+        profile.insert("token".to_string(), serde_json::Value::String(token.clone()));
+    }
+    if let Some(url) = base_url {
+        if !url.is_empty() {
+            profile.insert("baseUrl".to_string(), serde_json::Value::String(url.clone()));
+        }
+    }
+
+    ProviderAuthData {
+        auth_method: auth_method.to_string(),
+        token,
+        profile_key: Some(format!("{}:default", provider)),
+        profile: Some(serde_json::Value::Object(profile)),
+        oauth_provider_id: None,
+    }
+}
+
+fn get_provider_auth_map(config: &AgentConfig) -> std::collections::HashMap<String, ProviderAuthData> {
+    let mut provider_auths = config.provider_auths.clone().unwrap_or_default();
+    if !provider_auths.contains_key(&config.provider) {
+        provider_auths.insert(
+            config.provider.clone(),
+            default_provider_auth(
+                &config.provider,
+                &config.api_key,
+                config.auth_method.as_deref().unwrap_or("token"),
+                config.local_base_url.as_ref(),
+            ),
+        );
+    }
+    provider_auths
+}
+
+fn resolve_profile_name(provider: &str, provider_auth: &ProviderAuthData) -> String {
+    provider_auth
+        .profile_key
+        .clone()
+        .unwrap_or_else(|| format!("{}:default", provider))
+}
+
+fn build_auth_profiles_doc(
+    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
+    fallback_models: Option<&Vec<String>>,
+    local_base_url: Option<&String>,
+    primary_provider: &str,
+) -> serde_json::Value {
+    let mut profiles_map = serde_json::Map::new();
+    let mut last_good = serde_json::Map::new();
+
+    for (provider, provider_auth) in provider_auths {
+        let profile_key = resolve_profile_name(provider, provider_auth);
+        let profile = provider_auth.profile.clone().unwrap_or_else(|| {
+            default_provider_auth(provider, &provider_auth.token, &provider_auth.auth_method, local_base_url)
+                .profile
+                .unwrap_or(serde_json::json!({}))
+        });
+        profiles_map.insert(profile_key.clone(), profile);
+        last_good.insert(provider.clone(), serde_json::Value::String(profile_key));
+    }
+
+    if let Some(fallbacks) = fallback_models {
+        for model in fallbacks {
+            if let Some(provider) = model.split('/').next() {
+                if provider == "ollama" || provider == "lmstudio" || provider == "local" {
+                    let fallback_auth = default_provider_auth(provider, "", "token", local_base_url);
+                    let profile_key = resolve_profile_name(provider, &fallback_auth);
+                    let profile = fallback_auth.profile.unwrap_or(serde_json::json!({}));
+                    profiles_map.entry(profile_key.clone()).or_insert(profile);
+                    last_good.entry(provider.to_string()).or_insert(serde_json::Value::String(profile_key));
+                }
+            }
+        }
+    }
+
+    if !last_good.contains_key(primary_provider) {
+        last_good.insert(primary_provider.to_string(), serde_json::Value::String(format!("{}:default", primary_provider)));
+    }
+
+    serde_json::json!({
+        "version": 1,
+        "profiles": profiles_map,
+        "lastGood": last_good,
+        "usageStats": {}
+    })
+}
+
+fn oauth_provider_matches(base_provider: &str, provider_id: &str) -> bool {
+    matches!(
+        (base_provider, provider_id),
+        ("openai", "openai-codex")
+            | ("google", "google-gemini-cli")
+            | ("google", "google-antigravity")
+            | ("anthropic", "anthropic")
+            | ("google-vertex", "google-vertex")
+    ) || base_provider == provider_id
+}
+
+fn resolve_provider_auth_data(
+    base_provider: &str,
+    auth_config: &serde_json::Value,
+) -> Option<ProviderAuthData> {
+    let profiles = auth_config.get("profiles").and_then(|p| p.as_object())?;
+    let last_good_key = auth_config
+        .get("lastGood")
+        .and_then(|lg| lg.get(base_provider))
+        .and_then(|v| v.as_str());
+
+    let pick = if let Some(profile_key) = last_good_key {
+        profiles.get(profile_key).map(|profile| (profile_key.to_string(), profile.clone()))
+    } else {
+        profiles.iter().find_map(|(key, profile)| {
+            let provider_id = profile.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+            if key.starts_with(&format!("{}:", base_provider)) || oauth_provider_matches(base_provider, provider_id) {
+                Some((key.clone(), profile.clone()))
+            } else {
+                None
+            }
+        })
+    }?;
+
+    let (profile_key, profile) = pick;
+    let auth_method = profile
+        .get("type")
+        .and_then(|v| v.as_str())
+        .or_else(|| profile.get("mode").and_then(|v| v.as_str()))
+        .unwrap_or("token")
+        .to_string();
+    let token = profile
+        .get("token")
+        .and_then(|v| v.as_str())
+        .or_else(|| profile.get("access").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let oauth_provider_id = profile.get("provider").and_then(|v| v.as_str()).and_then(|provider_id| {
+        if provider_id != base_provider && auth_method == "oauth" {
+            Some(provider_id.to_string())
+        } else {
+            None
+        }
+    });
+
+    Some(ProviderAuthData {
+        auth_method,
+        token,
+        profile_key: Some(profile_key),
+        profile: Some(profile),
+        oauth_provider_id,
+    })
 }
 
 // SSH Helper Functions
@@ -574,10 +758,15 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         } else { (None, None) }
     };
 
-    let profile_name = format!("{}:default", config.provider);
-    let mut auth_mode = config.auth_method.unwrap_or_else(|| "token".to_string());
+    let provider_auths = get_provider_auth_map(&config);
+    let primary_provider_auth = provider_auths
+        .get(&config.provider)
+        .cloned()
+        .unwrap_or_else(|| default_provider_auth(&config.provider, &config.api_key, config.auth_method.as_deref().unwrap_or("token"), config.local_base_url.as_ref()));
+    let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
+    let mut auth_mode = primary_provider_auth.auth_method.clone();
     if auth_mode == "setup-token" { auth_mode = "token".to_string(); }
-    else if auth_mode == "antigravity" || auth_mode == "gemini_cli" || auth_mode == "codex" { auth_mode = "oauth".to_string(); }
+    else if auth_mode == "antigravity" || auth_mode == "gemini_cli" || auth_mode == "codex" || auth_mode == "claude-cli" || auth_mode == "openai-codex" || auth_mode == "google-gemini-cli" || auth_mode == "google-antigravity" { auth_mode = "oauth".to_string(); }
 
     // Telegram config will be added to the JSON object
 
@@ -921,58 +1110,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     }
 
     // auth-profiles.json
-    let mut profiles_map = serde_json::Map::new();
-    let mut primary_p = serde_json::Map::new();
-    primary_p.insert("type".to_string(), serde_json::Value::String(auth_mode));
-    primary_p.insert("provider".to_string(), serde_json::Value::String(config.provider.clone()));
-    if config.provider == "lmstudio" || config.provider == "local" { primary_p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
-    let token = if config.provider == "ollama" || config.provider == "lmstudio" || config.provider == "local" {
-        "dummy-token".to_string()
-    } else {
-        config.api_key.clone()
-    };
-    primary_p.insert("token".to_string(), serde_json::Value::String(token));
-    if let Some(ref base_url) = config.local_base_url {
-        if !base_url.is_empty() {
-            primary_p.insert("baseUrl".to_string(), serde_json::Value::String(base_url.clone()));
-        }
-    }
-    profiles_map.insert(profile_name.clone(), serde_json::Value::Object(primary_p));
-
-    if let Some(service_keys) = &config.service_keys {
-        for (sid, key) in service_keys {
-            let mut p = serde_json::Map::new();
-            p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
-            p.insert("provider".to_string(), serde_json::Value::String(sid.clone()));
-            p.insert("token".to_string(), serde_json::Value::String(key.clone()));
-            profiles_map.insert(format!("{}:default", sid), serde_json::Value::Object(p));
-        }
-    }
-    
-    // Add dummy tokens for fallback models if they are local
-    if let Some(fb) = &config.fallback_models {
-        for model in fb {
-            if let Some(provider) = model.split('/').next() {
-                if provider == "ollama" || provider == "lmstudio" || provider == "local" {
-                    let mut p = serde_json::Map::new();
-                    p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
-                    p.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
-                    if provider == "lmstudio" || provider == "local" { p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
-                    p.insert("token".to_string(), serde_json::Value::String("dummy-token".to_string()));
-                    if provider == "lmstudio" || provider == "local" {
-                        if let Some(ref base_url) = config.local_base_url {
-                            if !base_url.is_empty() {
-                                p.insert("baseUrl".to_string(), serde_json::Value::String(base_url.clone()));
-                            }
-                        }
-                    }
-                    profiles_map.insert(format!("{}:default", provider), serde_json::Value::Object(p));
-                }
-            }
-        }
-    }
-
-    let auth_profiles_val = serde_json::json!({ "version": 1, "profiles": profiles_map, "lastGood": { config.provider.clone(): profile_name }, "usageStats": {} });
+    let auth_profiles_val = build_auth_profiles_doc(&provider_auths, config.fallback_models.as_ref(), config.local_base_url.as_ref(), &config.provider);
     let auth_profiles_json = serde_json::to_string_pretty(&auth_profiles_val).map_err(|e| e.to_string())?.replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/auth-profiles.json", auth_profiles_json, agents_dir))?;
 
@@ -1273,8 +1411,23 @@ async fn get_remote_gateway_token(remote: RemoteInfo) -> Result<String, String> 
 }
 
 #[command]
-fn start_provider_auth(_provider: String, _method: String) -> Result<String, String> {
-    Err("OAuth authentication has been disabled.".to_string())
+fn start_provider_auth(provider: String, method: String, oauth_provider_id: String) -> Result<ProviderAuthData, String> {
+    let mut cmd = format!("openclaw models auth login --provider {}", oauth_provider_id);
+    if !method.is_empty() && method != oauth_provider_id {
+        cmd.push_str(&format!(" --method {}", method));
+    }
+    shell_command(&cmd)?;
+
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let auth_profiles_path = format!("{}/.openclaw/agents/main/agent/auth-profiles.json", home);
+    let auth_profiles_str = fs::read_to_string(&auth_profiles_path).map_err(|e| format!("Failed to read auth profiles: {}", e))?;
+    let auth_config: serde_json::Value = serde_json::from_str(&auth_profiles_str).map_err(|e| format!("Failed to parse auth profiles: {}", e))?;
+    resolve_provider_auth_data(&provider, &auth_config)
+        .map(|mut auth| {
+            auth.oauth_provider_id = Some(oauth_provider_id);
+            auth
+        })
+        .ok_or_else(|| format!("OAuth completed but no auth profile was found for provider {}", provider))
 }
 
 #[command]
@@ -1478,12 +1631,17 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         } else { (None, None) }
     };
 
-    let profile_name = format!("{}:default", config.provider);
-    let mut auth_mode = config.auth_method.as_deref().unwrap_or("token").to_string();
+    let provider_auths = get_provider_auth_map(&config);
+    let primary_provider_auth = provider_auths
+        .get(&config.provider)
+        .cloned()
+        .unwrap_or_else(|| default_provider_auth(&config.provider, &config.api_key, config.auth_method.as_deref().unwrap_or("token"), config.local_base_url.as_ref()));
+    let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
+    let mut auth_mode = primary_provider_auth.auth_method.clone();
 
     if auth_mode == "setup-token" {
         auth_mode = "token".to_string();
-    } else if auth_mode == "antigravity" || auth_mode == "gemini_cli" || auth_mode == "codex" {
+    } else if auth_mode == "antigravity" || auth_mode == "gemini_cli" || auth_mode == "codex" || auth_mode == "claude-cli" || auth_mode == "openai-codex" || auth_mode == "google-gemini-cli" || auth_mode == "google-antigravity" {
         auth_mode = "oauth".to_string();
     }
 
@@ -1940,64 +2098,7 @@ Serve {}."#, config.user_name)
                 write_file_fn(&format!("{}/MEMORY.md", agent_workspace), memory_md)?;
             }
 
-            let mut agent_profiles_map = serde_json::Map::new();
-            let mut primary_ai = serde_json::Map::new();
-            primary_ai.insert("type".to_string(), serde_json::Value::String(auth_mode.clone()));
-            primary_ai.insert("provider".to_string(), serde_json::Value::String(config.provider.clone()));
-            let token = if config.provider == "ollama" || config.provider == "lmstudio" || config.provider == "local" {
-                "dummy-token".to_string()
-            } else {
-                config.api_key.clone()
-            };
-            primary_ai.insert("token".to_string(), serde_json::Value::String(token));
-            if let Some(ref base_url) = config.local_base_url {
-                if !base_url.is_empty() {
-                    primary_ai.insert("baseUrl".to_string(), serde_json::Value::String(base_url.clone()));
-                }
-            }
-            agent_profiles_map.insert(profile_name.clone(), serde_json::Value::Object(primary_ai));
-
-            if let Some(service_keys) = &config.service_keys {
-                for (sid, key) in service_keys {
-                    let mut p = serde_json::Map::new();
-                    p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
-                    p.insert("provider".to_string(), serde_json::Value::String(sid.clone()));
-                    p.insert("token".to_string(), serde_json::Value::String(key.clone()));
-                    agent_profiles_map.insert(format!("{}:default", sid), serde_json::Value::Object(p));
-                }
-            }
-            
-            // Fallbacks for agents
-            if let Some(fb) = &config.fallback_models {
-                for model in fb {
-                    if let Some(provider) = model.split('/').next() {
-                        if provider == "ollama" || provider == "lmstudio" || provider == "local" {
-                            let mut p = serde_json::Map::new();
-                            p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
-                            p.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
-                            if provider == "lmstudio" || provider == "local" { p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
-                            p.insert("token".to_string(), serde_json::Value::String("dummy-token".to_string()));
-                            if provider == "lmstudio" || provider == "local" {
-                                if let Some(ref base_url) = config.local_base_url {
-                                    if !base_url.is_empty() {
-                                        p.insert("baseUrl".to_string(), serde_json::Value::String(base_url.clone()));
-                                    }
-                                }
-                            }
-                            agent_profiles_map.insert(format!("{}:default", provider), serde_json::Value::Object(p));
-                        }
-                    }
-                }
-            }
-
-            let agent_auth_profiles = serde_json::json!({
-                "version": 1,
-                "profiles": agent_profiles_map,
-                "lastGood": {
-                    config.provider.clone(): profile_name.clone()
-                },
-                "usageStats": {}
-            });
+            let agent_auth_profiles = build_auth_profiles_doc(&provider_auths, agent.fallback_models.as_ref().or(config.fallback_models.as_ref()), config.local_base_url.as_ref(), &config.provider);
 
             let agent_auth_json = serde_json::to_string_pretty(&agent_auth_profiles).map_err(|e| e.to_string())?;
             write_file_fn(&format!("{}/auth-profiles.json", agent_config_dir), &agent_auth_json)?;
@@ -2011,65 +2112,7 @@ Serve {}."#, config.user_name)
     // Telegram config is now written inline in the JSON above.
     // No need for openclaw config set commands which cause hot-reload conflicts.
 
-    let mut profiles_map = serde_json::Map::new();
-    let mut primary_p = serde_json::Map::new();
-    primary_p.insert("type".to_string(), serde_json::Value::String(auth_mode.clone()));
-    primary_p.insert("provider".to_string(), serde_json::Value::String(config.provider.clone()));
-    if config.provider == "lmstudio" || config.provider == "local" { primary_p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
-    let token = if config.provider == "ollama" || config.provider == "lmstudio" || config.provider == "local" {
-        "dummy-token".to_string()
-    } else {
-        config.api_key.clone()
-    };
-    primary_p.insert("token".to_string(), serde_json::Value::String(token));
-    if let Some(ref base_url) = config.local_base_url {
-        if !base_url.is_empty() {
-            primary_p.insert("baseUrl".to_string(), serde_json::Value::String(base_url.clone()));
-        }
-    }
-    profiles_map.insert(profile_name.clone(), serde_json::Value::Object(primary_p));
-
-    if let Some(service_keys) = &config.service_keys {
-        for (sid, key) in service_keys {
-            let mut p = serde_json::Map::new();
-            p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
-            p.insert("provider".to_string(), serde_json::Value::String(sid.clone()));
-            p.insert("token".to_string(), serde_json::Value::String(key.clone()));
-            profiles_map.insert(format!("{}:default", sid), serde_json::Value::Object(p));
-        }
-    }
-    
-    // Fallbacks for main agent
-    if let Some(fb) = &config.fallback_models {
-        for model in fb {
-            if let Some(provider) = model.split('/').next() {
-                if provider == "ollama" || provider == "lmstudio" || provider == "local" {
-                    let mut p = serde_json::Map::new();
-                    p.insert("type".to_string(), serde_json::Value::String("token".to_string()));
-                    p.insert("provider".to_string(), serde_json::Value::String(provider.to_string()));
-                    if provider == "lmstudio" || provider == "local" { p.insert("api".to_string(), serde_json::Value::String("openai".to_string())); }
-                    p.insert("token".to_string(), serde_json::Value::String("dummy-token".to_string()));
-                    if provider == "lmstudio" || provider == "local" {
-                        if let Some(ref base_url) = config.local_base_url {
-                            if !base_url.is_empty() {
-                                p.insert("baseUrl".to_string(), serde_json::Value::String(base_url.clone()));
-                            }
-                        }
-                    }
-                    profiles_map.insert(format!("{}:default", provider), serde_json::Value::Object(p));
-                }
-            }
-        }
-    }
-
-    let auth_profiles_val = serde_json::json!({
-      "version": 1,
-      "profiles": profiles_map,
-      "lastGood": {
-        config.provider.clone(): profile_name
-      },
-      "usageStats": {}
-    });
+    let auth_profiles_val = build_auth_profiles_doc(&provider_auths, config.fallback_models.as_ref(), config.local_base_url.as_ref(), &config.provider);
 
     let auth_profiles_json = serde_json::to_string_pretty(&auth_profiles_val).map_err(|e| e.to_string())?;
     write_file_fn(&format!("{}/auth-profiles.json", agents_dir), &auth_profiles_json)?;
@@ -2737,13 +2780,20 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     // Agent Config (Defaults / Main)
     let defaults = oc_config.get("agents").and_then(|a| a.get("defaults")).unwrap_or(&empty_json);
     let model_primary = defaults.get("model").and_then(|m| m.get("primary")).and_then(|v| v.as_str()).unwrap_or("anthropic/claude-opus-4-6").to_string();
+    let fallback_models: Vec<String> = defaults
+        .get("model")
+        .and_then(|m| m.get("fallbacks"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
     
     // Auth & Provider (Main)
-    let profile_name = format!("{}:default", model_primary.split('/').next().unwrap_or("anthropic"));
-    let profile = auth_config.get("profiles").and_then(|p| p.get(&profile_name)).unwrap_or(&empty_json);
-    let provider = profile.get("provider").and_then(|v| v.as_str()).unwrap_or("anthropic").to_string();
-    let api_key = profile.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let auth_method = profile.get("type").and_then(|v| v.as_str()).unwrap_or(if profile.get("mode").is_some() { profile.get("mode").and_then(|v| v.as_str()).unwrap_or("token") } else { "token" }).to_string();
+    let base_provider = model_primary.split('/').next().unwrap_or("anthropic").to_string();
+    let main_provider_auth = resolve_provider_auth_data(&base_provider, &auth_config)
+        .unwrap_or_else(|| default_provider_auth(&base_provider, "", "token", None));
+    let profile = main_provider_auth.profile.clone().unwrap_or(serde_json::json!({}));
+    let provider = base_provider.clone();
+    let api_key = main_provider_auth.token.clone();
+    let auth_method = main_provider_auth.auth_method.clone();
 
     // Markdown Extraction (Main)
     let agent_name = extract_md_value(&identity_str, "Name");
@@ -2765,6 +2815,14 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     // We look in ~/.openclaw/workspace/skills
     let skills = list_directories(&format!("{}/.openclaw/workspace/skills", home_dir));
 
+    let mut referenced_providers = std::collections::BTreeSet::new();
+    referenced_providers.insert(base_provider.clone());
+    for model in &fallback_models {
+        if let Some(p) = model.split('/').next() {
+            referenced_providers.insert(p.to_string());
+        }
+    }
+
     // Advanced Settings
     let sandbox_mode = defaults.get("sandbox").and_then(|s| s.get("mode")).and_then(|v| v.as_str()).unwrap_or("full").to_string();
     let mapped_sandbox = if sandbox_mode == "all" { "full" } else if sandbox_mode == "non-main" { "partial" } else if sandbox_mode == "off" { "none" } else { &sandbox_mode };
@@ -2773,6 +2831,13 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     let allowed_tools: Vec<String> = tools.get("allow").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let denied_tools: Vec<String> = tools.get("deny").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let tools_mode = if !allowed_tools.is_empty() { "allowlist" } else if !denied_tools.is_empty() { "denylist" } else { "all" };
+
+    let mut provider_auths = std::collections::HashMap::new();
+    for referenced_provider in &referenced_providers {
+        if let Some(auth) = resolve_provider_auth_data(referenced_provider, &auth_config) {
+            provider_auths.insert(referenced_provider.clone(), auth);
+        }
+    }
 
     let fallbacks: Vec<String> = defaults.get("model")
         .and_then(|m| m.get("fallbacks"))
@@ -2865,6 +2930,16 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
                  subagents: None,
                  tools: None,
              });
+             if let Some(agent_provider) = agent_configs.last().and_then(|a| a.model.split('/').next()) {
+                 referenced_providers.insert(agent_provider.to_string());
+             }
+             if let Some(agent_fallbacks) = agent_configs.last().and_then(|a| a.fallback_models.clone()) {
+                 for fallback in agent_fallbacks {
+                     if let Some(fallback_provider) = fallback.split('/').next() {
+                         referenced_providers.insert(fallback_provider.to_string());
+                     }
+                 }
+             }
          }
     }
 
@@ -2954,6 +3029,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         node_manager: "npm".to_string(),
         skills,
         service_keys: std::collections::HashMap::new(),
+        provider_auths,
         sandbox_mode: mapped_sandbox.to_string(),
         tools_mode: tools_mode.to_string(),
         allowed_tools,
@@ -2973,7 +3049,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         agent_configs,
         is_paired,
         cron_jobs,
-        local_base_url: None,
+        local_base_url: profile.get("baseUrl").and_then(|v| v.as_str()).map(|s| s.to_string()),
         thinking_level,
         whatsapp_enabled: Some(whatsapp_enabled),
         whatsapp_dm_policy,
@@ -3665,6 +3741,54 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].name, "SubAgent 1");
         assert_eq!(agents[0].emoji, Some("🤖".to_string()));
+    }
+
+    #[test]
+    fn test_build_auth_profiles_doc_preserves_oauth_profile_shape() {
+        let mut provider_auths = std::collections::HashMap::new();
+        provider_auths.insert(
+            "openai".to_string(),
+            ProviderAuthData {
+                auth_method: "openai-codex".to_string(),
+                token: "".to_string(),
+                profile_key: Some("openai-codex:default".to_string()),
+                profile: Some(serde_json::json!({
+                    "type": "oauth",
+                    "provider": "openai-codex",
+                    "access": "access-token",
+                    "refresh": "refresh-token"
+                })),
+                oauth_provider_id: Some("openai-codex".to_string()),
+            },
+        );
+
+        let doc = build_auth_profiles_doc(&provider_auths, None, None, "openai");
+        let profile = doc.get("profiles").and_then(|p| p.get("openai-codex:default")).unwrap();
+        assert_eq!(profile.get("type").and_then(|v| v.as_str()), Some("oauth"));
+        assert_eq!(profile.get("refresh").and_then(|v| v.as_str()), Some("refresh-token"));
+        assert_eq!(doc.get("lastGood").and_then(|v| v.get("openai")).and_then(|v| v.as_str()), Some("openai-codex:default"));
+    }
+
+    #[test]
+    fn test_resolve_provider_auth_data_uses_last_good_for_oauth_provider() {
+        let auth_config = serde_json::json!({
+            "profiles": {
+                "openai-codex:default": {
+                    "type": "oauth",
+                    "provider": "openai-codex",
+                    "access": "access-token"
+                }
+            },
+            "lastGood": {
+                "openai": "openai-codex:default"
+            }
+        });
+
+        let resolved = resolve_provider_auth_data("openai", &auth_config).expect("provider auth should resolve");
+        assert_eq!(resolved.profile_key.as_deref(), Some("openai-codex:default"));
+        assert_eq!(resolved.auth_method, "oauth");
+        assert_eq!(resolved.token, "access-token");
+        assert_eq!(resolved.oauth_provider_id.as_deref(), Some("openai-codex"));
     }
 
     #[test]

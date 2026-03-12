@@ -66,6 +66,14 @@ export interface ServiceKeyConfig {
   placeholder: string;
 }
 
+export interface ProviderAuthConfig {
+  auth_method: string;
+  token: string;
+  profile_key: string | null;
+  profile: Record<string, unknown> | null;
+  oauth_provider_id: string | null;
+}
+
 export interface RemoteConfig {
   ip: string;
   user: string;
@@ -157,6 +165,7 @@ export interface ConfigPayload {
   node_manager: string;
   skills: string[];
   service_keys: Record<string, string>;
+  provider_auths?: Record<string, ProviderAuthConfig>;
   sandbox_mode: string | null;
   tools_mode: string | null;
   allowed_tools: string[] | null;

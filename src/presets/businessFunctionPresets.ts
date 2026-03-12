@@ -49,7 +49,7 @@ Track user preferences for productivity tools and workflows.`,
       {
         id: "calendar",
         name: "Calendar Manager",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["apple-reminders"],
         identityMd: `# IDENTITY.md - Calendar Manager
 - **Name:** Calendar Manager
@@ -73,7 +73,7 @@ Track meeting patterns, preferred meeting times, and recurring events.`,
       {
         id: "email",
         name: "Email Manager",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["himalaya"],
         identityMd: `# IDENTITY.md - Email Manager
 - **Name:** Email Manager
@@ -147,7 +147,7 @@ Track active projects, tech stacks, and development conventions.`,
       {
         id: "code-review",
         name: "Code Reviewer",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["github", "coding-agent"],
         identityMd: `# IDENTITY.md - Code Reviewer
 - **Name:** Code Reviewer
@@ -171,7 +171,7 @@ Track code review patterns, common issues, and project conventions.`,
       {
         id: "testing",
         name: "Testing Agent",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["coding-agent"],
         identityMd: `# IDENTITY.md - Testing Agent
 - **Name:** Test Runner
@@ -244,7 +244,7 @@ Track financial metrics, market trends, and analysis patterns.`,
       {
         id: "data-analysis",
         name: "Data Analyst",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["coding-agent", "web-search"],
         identityMd: `# IDENTITY.md - Data Analyst
 - **Name:** Data Analyst
@@ -268,7 +268,7 @@ Track data sources, analysis templates, and key metrics.`,
       {
         id: "reporting",
         name: "Report Generator",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["coding-agent"],
         identityMd: `# IDENTITY.md - Report Generator
 - **Name:** Report Generator
@@ -342,7 +342,7 @@ Track brand voice, content calendar, and engagement metrics.`,
       {
         id: "research",
         name: "Research Agent",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
         identityMd: `# IDENTITY.md - Research Agent
 - **Name:** Research Agent
@@ -366,7 +366,7 @@ Track research findings, trend patterns, and competitor insights.`,
       {
         id: "content",
         name: "Content Creator",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
         identityMd: `# IDENTITY.md - Content Creator
 - **Name:** Content Creator
@@ -440,7 +440,7 @@ Track contacts, deal stages, and follow-up schedules.`,
       {
         id: "contacts",
         name: "Contact Manager",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
         identityMd: `# IDENTITY.md - Contact Manager
 - **Name:** Contact Manager
@@ -464,7 +464,7 @@ Track contact details, interaction history, and relationship status.`,
       {
         id: "followup",
         name: "Follow-up Agent",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["himalaya", "apple-reminders"],
         identityMd: `# IDENTITY.md - Follow-up Agent
 - **Name:** Follow-up Agent
@@ -539,7 +539,7 @@ Track common issues, resolution patterns, and customer satisfaction metrics.`,
       {
         id: "triage",
         name: "Ticket Triage",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
         identityMd: `# IDENTITY.md - Ticket Triage
 - **Name:** Ticket Triage
@@ -563,7 +563,7 @@ Track ticket patterns, common issues, and routing rules.`,
       {
         id: "response",
         name: "Response Drafter",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["himalaya"],
         identityMd: `# IDENTITY.md - Response Drafter
 - **Name:** Response Drafter
