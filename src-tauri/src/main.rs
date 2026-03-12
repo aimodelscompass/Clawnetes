@@ -2377,6 +2377,15 @@ fn parse_gateway_token_cli_output(output: &str) -> Option<String> {
     }
 }
 
+fn parse_dashboard_url_cli_output(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("Dashboard URL: ")
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty())
+    })
+}
+
 fn extract_gateway_token_from_config(config_str: &str, context: &str) -> Result<String, String> {
     let json: serde_json::Value = serde_json::from_str(config_str).map_err(|e| e.to_string())?;
     json.get("gateway")
@@ -3514,6 +3523,13 @@ fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<Stri
         let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
         let prefix = get_env_prefix(&os_type);
 
+        if let Some(url) = execute_ssh(&sess, &format!("{}openclaw dashboard --no-open", prefix))
+            .ok()
+            .and_then(|output| parse_dashboard_url_cli_output(&output))
+        {
+            return Ok(url);
+        }
+
         if let Some(token) = execute_ssh(
             &sess,
             &format!("{}openclaw config get gateway.auth.token", prefix),
@@ -3529,6 +3545,13 @@ fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<Stri
     } else {
         #[cfg(target_os = "windows")]
         {
+            if let Some(url) = wsl_root_command("openclaw dashboard --no-open")
+                .ok()
+                .and_then(|output| parse_dashboard_url_cli_output(&output))
+            {
+                return Ok(url);
+            }
+
             if let Some(token) = wsl_root_command("openclaw config get gateway.auth.token")
                 .ok()
                 .and_then(|output| parse_gateway_token_cli_output(&output))
@@ -3544,6 +3567,13 @@ fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<Stri
 
         #[cfg(not(target_os = "windows"))]
         {
+            if let Some(url) = shell_command("openclaw dashboard --no-open")
+                .ok()
+                .and_then(|output| parse_dashboard_url_cli_output(&output))
+            {
+                return Ok(url);
+            }
+
             if let Some(token) = shell_command("openclaw config get gateway.auth.token")
                 .ok()
                 .and_then(|output| parse_gateway_token_cli_output(&output))
@@ -3558,7 +3588,7 @@ fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<Stri
         }
     };
 
-    Ok(format!("http://127.0.0.1:18789/?token={}", token))
+    Ok(format!("http://127.0.0.1:18789/#token={}", token))
 }
 
 #[command]
@@ -5685,6 +5715,16 @@ mod tests {
         assert_eq!(parse_gateway_token_cli_output(""), None);
         assert_eq!(parse_gateway_token_cli_output("null"), None);
         assert_eq!(parse_gateway_token_cli_output("undefined"), None);
+    }
+
+    #[test]
+    fn test_parse_dashboard_url_cli_output_finds_url_amid_other_output() {
+        let output = "Doctor warnings...\nDashboard URL: http://127.0.0.1:18789/#token=abc123\nCopied to clipboard.\n";
+        assert_eq!(
+            parse_dashboard_url_cli_output(output),
+            Some("http://127.0.0.1:18789/#token=abc123".to_string())
+        );
+        assert_eq!(parse_dashboard_url_cli_output("no dashboard line"), None);
     }
 
     #[test]
