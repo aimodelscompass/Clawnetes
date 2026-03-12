@@ -9,7 +9,7 @@ import { AVAILABLE_SKILLS } from "./presets/availableSkills";
 import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
-import { buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
+import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig } from "./types";
 
@@ -723,6 +723,9 @@ function App() {
   // into the structure expected by configure_agent, for comparison.
   function transformInitialToPayload(initial: any) {
     if (!initial) return null;
+    const initialProviderAuths =
+      initial.provider_auths ||
+      normalizeProviderAuths({}, initial.provider, initial.api_key || "", initial.auth_method || "token");
     const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${initial.agent_name}
 - **Emoji:** ${initial.agent_emoji || "🦞"}
@@ -735,7 +738,7 @@ Managed by Clawnetes.`;
       provider: initial.provider,
       api_key: initial.api_key,
       auth_method: initial.auth_method,
-      model: initial.model,
+      model: applyModelProviderAuth(initial.model, initialProviderAuths),
       user_name: initial.user_name,
       agent_name: initial.agent_name,
       agent_vibe: initial.agent_vibe || "",
@@ -747,12 +750,14 @@ Managed by Clawnetes.`;
       node_manager: initial.node_manager,
       skills: initial.skills || [],
       service_keys: initial.service_keys || {},
-      provider_auths: initial.provider_auths || normalizeProviderAuths({}, initial.provider, initial.api_key || "", initial.auth_method || "token"),
+      provider_auths: initialProviderAuths,
       sandbox_mode: mappedSandboxMode,
       tools_mode: initial.tools_mode,
       allowed_tools: initial.tools_mode === "allowlist" ? (initial.allowed_tools || []) : null,
       denied_tools: initial.tools_mode === "denylist" ? (initial.denied_tools || []) : null,
-      fallback_models: (initial.fallback_models && initial.fallback_models.length > 0) ? initial.fallback_models : null,
+      fallback_models: (initial.fallback_models && initial.fallback_models.length > 0)
+        ? initial.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
+        : null,
       heartbeat_mode: initial.heartbeat_mode,
       idle_timeout_ms: initial.heartbeat_mode === "idle" ? initial.idle_timeout_ms : null,
       identity_md: initial.identity_md || defaultIdentity,
@@ -761,8 +766,10 @@ Managed by Clawnetes.`;
       agents: initial.enable_multi_agent && initial.agent_configs ? initial.agent_configs.map((a: any) => ({
         id: a.id,
         name: a.name,
-        model: a.model,
-        fallback_models: (a.fallback_models && a.fallback_models.length > 0) ? a.fallback_models : null,
+        model: applyModelProviderAuth(a.model, initialProviderAuths),
+        fallback_models: (a.fallback_models && a.fallback_models.length > 0)
+          ? a.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
+          : null,
         skills: (a.skills && a.skills.length > 0) ? a.skills : null,
         vibe: a.vibe || "",
         identity_md: a.identity_md || `# IDENTITY.md - Who Am I?
@@ -808,7 +815,7 @@ Managed by Clawnetes.`;
       provider,
       api_key: effectiveProviderAuths[provider]?.token || apiKey,
       auth_method: effectiveProviderAuths[provider]?.auth_method || authMethod,
-      model,
+      model: applyModelProviderAuth(model, effectiveProviderAuths),
       user_name: userName,
       agent_name: agentName,
       agent_vibe: "",
@@ -825,7 +832,9 @@ Managed by Clawnetes.`;
       tools_mode: usePresetFields ? toolsMode : null,
       allowed_tools: usePresetFields && toolsMode === "allowlist" ? allowedTools : null,
       denied_tools: usePresetFields && toolsMode === "denylist" ? deniedTools : null,
-      fallback_models: usePresetFields && enableFallbacks ? fallbackModels.filter(m => m) : null,
+      fallback_models: usePresetFields && enableFallbacks
+        ? fallbackModels.filter(m => m).map(m => applyModelProviderAuth(m, effectiveProviderAuths))
+        : null,
       heartbeat_mode: usePresetFields ? heartbeatMode : null,
       idle_timeout_ms: usePresetFields && heartbeatMode === "idle" ? idleTimeoutMs : null,
       identity_md: (usePresetFields && identityMd) ? identityMd : defaultIdentity,
@@ -834,8 +843,10 @@ Managed by Clawnetes.`;
       agents: enableMultiAgent ? agentConfigs.map(a => ({
         id: a.id,
         name: a.name,
-        model: a.model,
-        fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
+        model: applyModelProviderAuth(a.model, effectiveProviderAuths),
+        fallback_models: a.fallbackModels.length > 0
+          ? a.fallbackModels.map(m => applyModelProviderAuth(m, effectiveProviderAuths))
+          : null,
         skills: a.skills.length > 0 ? a.skills : null,
         vibe: a.vibe,
         identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
@@ -1145,7 +1156,7 @@ Managed by Clawnetes.`,
       setApiKey(config.api_key);
       setAuthMethod(config.auth_method);
       setProviderAuths(normalizeProviderAuths(config.provider_auths, config.provider, config.api_key || "", config.auth_method || "token"));
-      setModel(config.model);
+      setModel(normalizeModelRefForUi(config.model));
       setUserName(config.user_name);
       setAgentName(config.agent_name);
       setAgentEmoji(config.agent_emoji || "🦞");
@@ -1167,7 +1178,7 @@ Managed by Clawnetes.`,
       setAllowedTools(config.allowed_tools);
       setDeniedTools(config.denied_tools);
 
-      setFallbackModels(config.fallback_models);
+      setFallbackModels(config.fallback_models.map(normalizeModelRefForUi));
       setEnableFallbacks(config.fallback_models.length > 0);
 
       setHeartbeatMode(config.heartbeat_mode);
@@ -1210,8 +1221,8 @@ Managed by Clawnetes.`,
         setAgentConfigs(config.agent_configs.map((a: any) => ({
           id: a.id,
           name: a.name,
-          model: a.model,
-          fallbackModels: a.fallback_models || [],
+          model: normalizeModelRefForUi(a.model),
+          fallbackModels: (a.fallback_models || []).map(normalizeModelRefForUi),
           skills: a.skills || [],
           vibe: a.vibe,
           emoji: a.emoji || "🦞",

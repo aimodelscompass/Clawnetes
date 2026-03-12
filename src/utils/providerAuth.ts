@@ -15,6 +15,31 @@ export const OAUTH_METHODS_BY_PROVIDER: Record<string, Array<{ value: string; la
   ],
 };
 
+const MODEL_PROVIDER_OVERRIDE_BY_AUTH_METHOD: Record<string, string> = {
+  "openai-codex": "openai-codex",
+};
+
+export function getEffectiveModelProvider(provider: string, providerAuths: Record<string, ProviderAuthConfig>): string {
+  const authMethod = providerAuths[provider]?.auth_method;
+  return authMethod ? (MODEL_PROVIDER_OVERRIDE_BY_AUTH_METHOD[authMethod] || provider) : provider;
+}
+
+export function applyModelProviderAuth(modelRef: string, providerAuths: Record<string, ProviderAuthConfig>): string {
+  if (!modelRef || !modelRef.includes("/")) return modelRef;
+  const [provider, ...rest] = modelRef.split("/");
+  const effectiveProvider = getEffectiveModelProvider(provider, providerAuths);
+  if (effectiveProvider === provider) return modelRef;
+  return `${effectiveProvider}/${rest.join("/")}`;
+}
+
+export function normalizeModelRefForUi(modelRef: string): string {
+  if (!modelRef || !modelRef.includes("/")) return modelRef;
+  if (modelRef.startsWith("openai-codex/")) {
+    return `openai/${modelRef.slice("openai-codex/".length)}`;
+  }
+  return modelRef;
+}
+
 export function getDefaultAuthMethod(provider: string): string {
   if (provider === "anthropic") return "token";
   if (provider === "openai") return "token";

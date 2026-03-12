@@ -286,6 +286,21 @@ fn normalize_auth_mode(auth_method: &str) -> String {
     }
 }
 
+fn normalize_provider_for_ui(provider: &str) -> String {
+    match provider {
+        "openai-codex" => "openai".to_string(),
+        _ => provider.to_string(),
+    }
+}
+
+fn normalize_model_ref_for_ui(model_ref: &str) -> String {
+    if let Some(rest) = model_ref.strip_prefix("openai-codex/") {
+        format!("openai/{}", rest)
+    } else {
+        model_ref.to_string()
+    }
+}
+
 fn get_provider_auth_map(
     config: &AgentConfig,
 ) -> std::collections::HashMap<String, ProviderAuthData> {
@@ -3971,24 +3986,29 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         .get("agents")
         .and_then(|a| a.get("defaults"))
         .unwrap_or(&empty_json);
-    let model_primary = defaults
+    let model_primary_raw = defaults
         .get("model")
         .and_then(|m| m.get("primary"))
         .and_then(|v| v.as_str())
         .unwrap_or("anthropic/claude-opus-4-6")
         .to_string();
-    let fallback_models: Vec<String> = defaults
+    let model_primary = normalize_model_ref_for_ui(&model_primary_raw);
+    let fallback_models_raw: Vec<String> = defaults
         .get("model")
         .and_then(|m| m.get("fallbacks"))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
+    let fallback_models: Vec<String> = fallback_models_raw
+        .iter()
+        .map(|model| normalize_model_ref_for_ui(model))
+        .collect();
 
     // Auth & Provider (Main)
-    let base_provider = model_primary
+    let base_provider = model_primary_raw
         .split('/')
         .next()
-        .unwrap_or("anthropic")
-        .to_string();
+        .map(normalize_provider_for_ui)
+        .unwrap_or_else(|| "anthropic".to_string());
     let main_provider_auth = resolve_provider_auth_data(&base_provider, &auth_config)
         .unwrap_or_else(|| default_provider_auth(&base_provider, "", "token", None));
     let profile = main_provider_auth
@@ -4022,9 +4042,9 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
 
     let mut referenced_providers = std::collections::BTreeSet::new();
     referenced_providers.insert(base_provider.clone());
-    for model in &fallback_models {
+    for model in &fallback_models_raw {
         if let Some(p) = model.split('/').next() {
-            referenced_providers.insert(p.to_string());
+            referenced_providers.insert(normalize_provider_for_ui(p));
         }
     }
 
@@ -4069,11 +4089,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         }
     }
 
-    let fallbacks: Vec<String> = defaults
-        .get("model")
-        .and_then(|m| m.get("fallbacks"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+    let fallbacks = fallback_models.clone();
 
     let heartbeat = defaults.get("heartbeat").unwrap_or(&empty_json);
     let heartbeat_mode = if heartbeat.get("enabled") == Some(&serde_json::json!(false)) {
@@ -4119,7 +4135,8 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
                 .to_string();
 
             // Robust Model Extraction: Handle nested {primary: "..."} or simple string "..."
-            let amodel = if let Some(m_obj) = agent_val.get("model").and_then(|m| m.as_object()) {
+            let amodel_raw = if let Some(m_obj) = agent_val.get("model").and_then(|m| m.as_object())
+            {
                 m_obj
                     .get("primary")
                     .and_then(|s| s.as_str())
@@ -4130,8 +4147,9 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
             } else {
                 "".to_string()
             };
+            let amodel = normalize_model_ref_for_ui(&amodel_raw);
 
-            let afallbacks: Vec<String> = agent_val
+            let afallbacks_raw: Vec<String> = agent_val
                 .get("model")
                 .and_then(|m| {
                     if m.is_object() {
@@ -4142,6 +4160,10 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
                 })
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default();
+            let afallbacks: Vec<String> = afallbacks_raw
+                .iter()
+                .map(|model| normalize_model_ref_for_ui(model))
+                .collect();
 
             // Read Agent Files (Absolute Paths)
             let agent_workspace_base = format!("{}/.openclaw/agents/{}/workspace", home_dir, aid);
@@ -4215,14 +4237,14 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
             if let Some(agent_provider) =
                 agent_configs.last().and_then(|a| a.model.split('/').next())
             {
-                referenced_providers.insert(agent_provider.to_string());
+                referenced_providers.insert(normalize_provider_for_ui(agent_provider));
             }
             if let Some(agent_fallbacks) =
                 agent_configs.last().and_then(|a| a.fallback_models.clone())
             {
                 for fallback in agent_fallbacks {
                     if let Some(fallback_provider) = fallback.split('/').next() {
-                        referenced_providers.insert(fallback_provider.to_string());
+                        referenced_providers.insert(normalize_provider_for_ui(fallback_provider));
                     }
                 }
             }
@@ -5361,6 +5383,24 @@ mod tests {
         assert_eq!(normalize_auth_mode("claude-cli"), "oauth");
         assert_eq!(normalize_auth_mode("setup-token"), "token");
         assert_eq!(normalize_auth_mode("token"), "token");
+    }
+
+    #[test]
+    fn test_normalize_provider_for_ui_maps_openai_codex() {
+        assert_eq!(normalize_provider_for_ui("openai-codex"), "openai");
+        assert_eq!(normalize_provider_for_ui("openai"), "openai");
+    }
+
+    #[test]
+    fn test_normalize_model_ref_for_ui_maps_openai_codex_namespace() {
+        assert_eq!(
+            normalize_model_ref_for_ui("openai-codex/gpt-5.4"),
+            "openai/gpt-5.4"
+        );
+        assert_eq!(
+            normalize_model_ref_for_ui("anthropic/claude-opus-4-6"),
+            "anthropic/claude-opus-4-6"
+        );
     }
 
     #[test]

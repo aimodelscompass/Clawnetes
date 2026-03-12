@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getProviderAuthOptions, isOAuthMethod, normalizeProviderAuths } from "../utils/providerAuth";
+import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getProviderAuthOptions, isOAuthMethod, normalizeModelRefForUi, normalizeProviderAuths } from "../utils/providerAuth";
 
 describe("providerAuth utilities", () => {
   it("builds a deduplicated set of referenced remote providers", () => {
@@ -71,5 +71,21 @@ describe("providerAuth utilities", () => {
       expect.objectContaining({ id: "provider:anthropic", targetProvider: "anthropic", authMethod: "claude-cli" }),
       expect.objectContaining({ id: "skill:gemini", targetProvider: "google", authMethod: "google-gemini-cli" }),
     ]);
+  });
+
+  it("maps openai model refs to openai-codex when codex oauth is selected", () => {
+    expect(applyModelProviderAuth("openai/gpt-5.4", {
+      openai: {
+        auth_method: "openai-codex",
+        token: "",
+        profile_key: "openai-codex:default",
+        profile: null,
+        oauth_provider_id: "openai-codex",
+      },
+    })).toBe("openai-codex/gpt-5.4");
+  });
+
+  it("normalizes openai-codex model refs back to the ui namespace", () => {
+    expect(normalizeModelRefForUi("openai-codex/gpt-5.4")).toBe("openai/gpt-5.4");
   });
 });
