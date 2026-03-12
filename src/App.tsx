@@ -354,7 +354,7 @@ function App() {
     for (const item of deferredOAuthQueue) {
       setOauthCompletionResults(prev => ({
         ...prev,
-        [item.id]: { status: "pending", message: "Waiting for browser authentication..." },
+        [item.id]: { status: "pending", message: "Opening a terminal for interactive OpenClaw authentication..." },
       }));
       setProviderAuthBusy(prev => ({ ...prev, [item.targetProvider]: true }));
       setProviderAuthErrors(prev => ({ ...prev, [item.targetProvider]: "" }));
@@ -368,7 +368,7 @@ function App() {
         updateProviderAuth(item.targetProvider, result);
         setOauthCompletionResults(prev => ({
           ...prev,
-          [item.id]: { status: "success", message: `Connected via ${item.label}.` },
+          [item.id]: { status: "success", message: `Connected via ${item.label}. OpenClaw imported the auth profile.` },
         }));
       } catch (e: any) {
         const message = String(e);
@@ -1873,7 +1873,7 @@ Managed by Clawnetes.`,
                   const skill = availableSkills.find(sk => sk.id === s)!;
                   return (
                     <div key={s} style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                      {skill.name}: browser authentication will run at the end of setup.
+                      {skill.name}: an OpenClaw terminal auth step will run at the end of setup.
                     </div>
                   );
                 })}
@@ -4079,9 +4079,9 @@ Managed by Clawnetes.`,
                 marginBottom: "1.5rem",
                 border: "1px solid var(--border)"
               }}>
-                <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Deferred Browser Authentication</h3>
+                <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Deferred OpenClaw Authentication</h3>
                 <p className="step-description" style={{ marginBottom: "0.75rem" }}>
-                  OpenClaw is installed. Browser-based authentication is completed here at the end of setup.
+                  OpenClaw is installed. Clawnetes will open a terminal for each OAuth provider, and that flow may open your browser before the imported profile is synced back into the app.
                 </p>
                 <div style={{ display: "grid", gap: "0.5rem" }}>
                   {deferredOAuthQueue.map(item => {
@@ -4092,7 +4092,7 @@ Managed by Clawnetes.`,
                       <div key={item.id} style={{ padding: "0.75rem", border: "1px solid var(--border)", borderRadius: "8px" }}>
                         <div style={{ fontWeight: 600 }}>{item.label}</div>
                         <div style={{ fontSize: "0.85rem", color }}>
-                          {result?.message || (oauthCompletionRunning ? "Waiting for authentication..." : "Pending browser authentication")}
+                          {result?.message || (oauthCompletionRunning ? "Waiting for terminal authentication..." : "Pending terminal authentication")}
                         </div>
                       </div>
                     );
@@ -4109,7 +4109,7 @@ Managed by Clawnetes.`,
                     });
                   }}
                 >
-                  {oauthCompletionRunning ? "Running Browser Authentication..." : "Retry Deferred OAuth"}
+                  {oauthCompletionRunning ? "Running OpenClaw Authentication..." : "Retry Deferred OAuth"}
                 </button>
               </div>
             )}
