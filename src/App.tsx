@@ -10,9 +10,10 @@ import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
 import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
-import { CORE_TOOL_OPTIONS, getSkillIdSet, normalizeSkillAndToolSelection, sanitizeAllowedTools } from "./utils/toolSelection";
+import ToolPolicyEditor from "./components/ToolPolicyEditor";
+import { DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import Dropdown from "./components/Dropdown";
-import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig } from "./types";
+import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 
 function App() {
   const handleAdvancedTransition = async () => {
@@ -109,9 +110,7 @@ function App() {
 
   // NEW: Security Best Practices (Step 11)
   const [sandboxMode, setSandboxMode] = useState("none");
-  const [toolsMode, setToolsMode] = useState("allowlist");
-  const [allowedTools, setAllowedTools] = useState<string[]>(["filesystem", "terminal", "browser"]);
-  const [deniedTools, setDeniedTools] = useState<string[]>([]);
+  const [toolPolicy, setToolPolicy] = useState<ToolPolicy>(DEFAULT_TOOL_POLICY);
 
   // NEW: Fallback Models (Step 12)
   const [enableFallbacks, setEnableFallbacks] = useState(false);
@@ -219,8 +218,7 @@ function App() {
 
     // Set security
     setSandboxMode(preset.sandboxMode);
-    setToolsMode(preset.toolsMode);
-    setAllowedTools(preset.allowedTools);
+    setToolPolicy(normalizeToolPolicy(preset.toolPolicy));
 
     // Set session
     setHeartbeatMode(preset.heartbeatMode);
@@ -732,20 +730,18 @@ function App() {
   // emitted with their useState defaults by constructConfigPayload().
   function normalizeForComparison(payload: any) {
     if (!payload) return payload;
-    const effectiveToolsMode = payload.tools_mode ?? "allowlist";
-    const normalizedAllowedTools = effectiveToolsMode === "allowlist"
-      ? sanitizeAllowedTools(payload.allowed_tools, availableSkillIds)
-      : payload.allowed_tools;
+    const normalizedPolicy = normalizeToolPolicy({
+      profile: payload.tools_profile ?? null,
+      allow: payload.allowed_tools ?? [],
+      deny: payload.denied_tools ?? [],
+    }, availableSkillIds);
     return {
       ...payload,
       sandbox_mode: payload.sandbox_mode ?? "off",
-      tools_mode: effectiveToolsMode,
-      allowed_tools: effectiveToolsMode === "allowlist"
-        ? (normalizedAllowedTools.length > 0 ? normalizedAllowedTools : ["filesystem", "terminal", "browser"])
-        : normalizedAllowedTools,
-      denied_tools: effectiveToolsMode === "denylist"
-        ? (payload.denied_tools ?? [])
-        : null,
+      tools_mode: payload.tools_mode ?? null,
+      tools_profile: normalizedPolicy.profile,
+      allowed_tools: normalizedPolicy.allow,
+      denied_tools: normalizedPolicy.deny,
       heartbeat_mode: payload.heartbeat_mode ?? "1h",
       idle_timeout_ms: (payload.heartbeat_mode ?? "1h") === "idle"
         ? payload.idle_timeout_ms
@@ -762,9 +758,14 @@ function App() {
       normalizeProviderAuths({}, initial.provider, initial.api_key || "", initial.auth_method || "token");
     const normalizedTopLevelSelection = normalizeSkillAndToolSelection(
       initial.skills || [],
-      initial.tools_mode === "allowlist" ? (initial.allowed_tools || []) : [],
+      initial.allowed_tools || [],
       availableSkillIds,
     );
+    const normalizedTopLevelToolPolicy = normalizeToolPolicy({
+      profile: initial.tools_profile ?? null,
+      allow: initial.allowed_tools || [],
+      deny: initial.denied_tools || [],
+    }, availableSkillIds);
     const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${initial.agent_name}
 - **Emoji:** ${initial.agent_emoji || "🦞"}
@@ -791,9 +792,10 @@ Managed by Clawnetes.`;
       service_keys: initial.service_keys || {},
       provider_auths: initialProviderAuths,
       sandbox_mode: mappedSandboxMode,
-      tools_mode: initial.tools_mode,
-      allowed_tools: initial.tools_mode === "allowlist" ? normalizedTopLevelSelection.allowedTools : null,
-      denied_tools: initial.tools_mode === "denylist" ? (initial.denied_tools || []) : null,
+      tools_mode: initial.tools_mode ?? null,
+      tools_profile: normalizedTopLevelToolPolicy.profile,
+      allowed_tools: normalizedTopLevelToolPolicy.allow,
+      denied_tools: normalizedTopLevelToolPolicy.deny,
       fallback_models: (initial.fallback_models && initial.fallback_models.length > 0)
         ? initial.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
         : null,
@@ -808,6 +810,12 @@ Managed by Clawnetes.`;
           a.allowed_tools || [],
           availableSkillIds,
         );
+        const normalizedAgentToolPolicy = normalizeToolPolicy({
+          profile: a.tools_profile ?? a.tools?.profile ?? null,
+          allow: a.allowed_tools || a.tools?.allow || [],
+          deny: a.denied_tools || a.tools?.deny || [],
+          elevatedEnabled: a.tools?.elevated?.enabled ?? false,
+        }, availableSkillIds);
 
         return {
           id: a.id,
@@ -827,6 +835,12 @@ Managed by Clawnetes.`,
           soul_md: a.soul_md || null,
           tools_md: a.tools_md || null,
           agents_md: a.agents_md || null,
+          tools: {
+            profile: normalizedAgentToolPolicy.profile,
+            allow: normalizedAgentToolPolicy.allow,
+            deny: normalizedAgentToolPolicy.deny,
+            elevated: { enabled: normalizedAgentToolPolicy.elevatedEnabled ?? false },
+          },
         };
       }) : null,
       preserve_state: isPaired,
@@ -857,7 +871,7 @@ Managed by Clawnetes.`;
 
     // For preset agents, always include preset-configured fields
     const usePresetFields = isPresetAgent || mode === "advanced";
-    const sanitizedTopLevelAllowedTools = sanitizeAllowedTools(allowedTools, availableSkillIds);
+    const normalizedTopLevelToolPolicy = normalizeToolPolicy(toolPolicy, availableSkillIds);
 
     return {
       provider,
@@ -877,9 +891,10 @@ Managed by Clawnetes.`;
       service_keys: serviceKeys,
       provider_auths: effectiveProviderAuths,
       sandbox_mode: usePresetFields ? mappedSandboxMode : null,
-      tools_mode: usePresetFields ? toolsMode : null,
-      allowed_tools: usePresetFields && toolsMode === "allowlist" ? sanitizedTopLevelAllowedTools : null,
-      denied_tools: usePresetFields && toolsMode === "denylist" ? deniedTools : null,
+      tools_mode: null,
+      tools_profile: usePresetFields ? normalizedTopLevelToolPolicy.profile : null,
+      allowed_tools: usePresetFields ? normalizedTopLevelToolPolicy.allow : null,
+      denied_tools: usePresetFields ? normalizedTopLevelToolPolicy.deny : null,
       fallback_models: usePresetFields && enableFallbacks
         ? fallbackModels.filter(m => m).map(m => applyModelProviderAuth(m, effectiveProviderAuths))
         : null,
@@ -891,9 +906,10 @@ Managed by Clawnetes.`;
       agents: enableMultiAgent ? agentConfigs.map(a => {
         const normalizedAgentSelection = normalizeSkillAndToolSelection(
           a.skills,
-          a.allowedTools,
+          a.toolPolicy.allow,
           availableSkillIds,
         );
+        const normalizedAgentToolPolicy = normalizeToolPolicy(a.toolPolicy, availableSkillIds);
 
         return {
           id: a.id,
@@ -913,6 +929,12 @@ Managed by Clawnetes.`,
           soul_md: a.soulMd || null,
           tools_md: a.toolsMd || null,
           agents_md: a.agentsMd || null,
+          tools: {
+            profile: normalizedAgentToolPolicy.profile,
+            allow: normalizedAgentToolPolicy.allow,
+            deny: normalizedAgentToolPolicy.deny,
+            elevated: { enabled: normalizedAgentToolPolicy.elevatedEnabled ?? false },
+          },
         };
       }) : null,
       preserve_state: isPaired,
@@ -1236,14 +1258,27 @@ Managed by Clawnetes.`,
         config.allowed_tools,
         availableSkillIds,
       );
+      const normalizedTopLevelToolPolicy = normalizeToolPolicy(
+        config.tools_profile
+          ? {
+              profile: config.tools_profile,
+              allow: config.allowed_tools,
+              deny: config.denied_tools,
+            }
+          : deriveToolPolicyFromLegacy(
+              config.tools_mode,
+              config.allowed_tools,
+              config.denied_tools,
+              availableSkillIds,
+            ),
+        availableSkillIds,
+      );
       setSelectedSkills(normalizedTopLevelSelection.skills);
       // Service keys might be partial, merge them?
       setServiceKeys(config.service_keys);
 
       setSandboxMode(config.sandbox_mode);
-      setToolsMode(config.tools_mode);
-      setAllowedTools(normalizedTopLevelSelection.allowedTools);
-      setDeniedTools(config.denied_tools);
+      setToolPolicy(normalizedTopLevelToolPolicy);
 
       setFallbackModels(config.fallback_models.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)));
       setEnableFallbacks(config.fallback_models.length > 0);
@@ -1291,6 +1326,22 @@ Managed by Clawnetes.`,
             a.allowed_tools,
             availableSkillIds,
           );
+          const normalizedAgentToolPolicy = normalizeToolPolicy(
+            a.tools_profile || a.tools?.profile
+              ? {
+                  profile: a.tools_profile || a.tools?.profile,
+                  allow: a.allowed_tools || a.tools?.allow,
+                  deny: a.denied_tools || a.tools?.deny,
+                  elevatedEnabled: a.tools?.elevated?.enabled,
+                }
+              : deriveToolPolicyFromLegacy(
+                  "allowlist",
+                  a.allowed_tools,
+                  a.denied_tools,
+                  availableSkillIds,
+                ),
+            availableSkillIds,
+          );
 
           return {
             id: a.id,
@@ -1305,7 +1356,7 @@ Managed by Clawnetes.`,
             soulMd: a.soul_md || "",
             toolsMd: a.tools_md || "",
             agentsMd: a.agents_md || "",
-            allowedTools: normalizedAgentSelection.allowedTools,
+            toolPolicy: normalizedAgentToolPolicy,
             cronJobs: a.cron_jobs || [],
           };
         }));
@@ -2543,44 +2594,14 @@ Managed by Clawnetes.`,
       case 11.1:
         return (
           <div className="step-view">
-            <h2>Allowed Tools</h2>
-            <p className="step-description">Configure which tools your agent is allowed to use.</p>
+            <h2>Tool Access</h2>
+            <p className="step-description">Configure the base tool profile and individual tool access.</p>
 
-            <div className="form-group">
-              <label>Tools Policy</label>
-              <Dropdown
-                value={toolsMode}
-                onChange={setToolsMode}
-                options={[
-                  { value: "allowlist", label: "Allowlist (Recommended)", description: "Only enable explicitly selected tools." },
-                  { value: "denylist", label: "Denylist", description: "Block specific tools." },
-                  { value: "all", label: "All Tools", description: "Enable all available tools." }
-                ]}
-              />
-            </div>
-
-            {toolsMode === "allowlist" && (
-              <div className="form-group" style={{ marginTop: "1rem" }}>
-                <label>Allowed Tools</label>
-                <div className="skills-grid">
-                  {CORE_TOOL_OPTIONS.map(tool => (
-                    <div
-                      key={tool.id}
-                      className={`skill-card ${allowedTools.includes(tool.id) ? "active" : ""}`}
-                      onClick={() => {
-                        setAllowedTools(prev =>
-                          prev.includes(tool.id)
-                            ? prev.filter(t => t !== tool.id)
-                            : [...prev, tool.id]
-                        );
-                      }}
-                    >
-                      <div className="skill-name">{tool.name}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <ToolPolicyEditor
+              policy={toolPolicy}
+              onChange={setToolPolicy}
+              description="Profiles set the default OpenClaw allowlist. Individual toggles override that baseline."
+            />
 
             <div className="button-group">
               <button className="primary" onClick={() => setStep(15)}>Next</button>
@@ -2674,40 +2695,12 @@ Managed by Clawnetes.`,
             </div>
 
             <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>Tools Policy</label>
-              <Dropdown
-                value={toolsMode}
-                onChange={setToolsMode}
-                options={[
-                  { value: "allowlist", label: "Allowlist (Recommended)", description: "Only enable explicitly selected tools." },
-                  { value: "denylist", label: "Denylist", description: "Block specific tools." },
-                  { value: "all", label: "All Tools", description: "Enable all available tools." }
-                ]}
+              <ToolPolicyEditor
+                policy={toolPolicy}
+                onChange={setToolPolicy}
+                description="Use a profile as the base, then refine individual tools."
               />
             </div>
-
-            {toolsMode === "allowlist" && (
-              <div className="form-group">
-                <label>Allowed Tools</label>
-                <div className="skills-grid">
-                  {CORE_TOOL_OPTIONS.map(tool => (
-                    <div
-                      key={tool.id}
-                      className={`skill-card ${allowedTools.includes(tool.id) ? "active" : ""}`}
-                      onClick={() => {
-                        setAllowedTools(prev =>
-                          prev.includes(tool.id)
-                            ? prev.filter(t => t !== tool.id)
-                            : [...prev, tool.id]
-                        );
-                      }}
-                    >
-                      <div className="skill-name">{tool.name}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             <div className="button-group">
               <button className="primary" onClick={() => setStep(13)}>Continue</button>
@@ -3153,7 +3146,7 @@ Managed by Clawnetes.`,
                         soulMd: sub.soulMd,
                         toolsMd: sub.toolsMd || "",
                         agentsMd: sub.agentsMd || "",
-                        allowedTools: [],
+                        toolPolicy: DEFAULT_TOOL_POLICY,
                         cronJobs: [],
                       });
                     }
@@ -3188,7 +3181,7 @@ Managed by Clawnetes.`,
                         soulMd: "",
                         toolsMd: "",
                         agentsMd: "",
-                        allowedTools: [],
+                        toolPolicy: DEFAULT_TOOL_POLICY,
                         cronJobs: [],
                       });
                     }
@@ -3567,30 +3560,19 @@ Managed by Clawnetes.`,
               </div>
             </div>
 
-            {/* Allowed Tools */}
+            {/* Tool Access */}
             <div className="form-group" style={{ marginTop: "1rem" }}>
-              <label>Allowed Tools</label>
-              <div className="skills-grid" style={{ marginTop: "0.5rem" }}>
-                {CORE_TOOL_OPTIONS.map(tool => (
-                  <div
-                    key={`tool-${tool.id}`}
-                    className={`skill-card ${currentAgent.allowedTools.includes(tool.id) ? "active" : ""}`}
-                    onClick={() => {
-                      const updated = [...agentConfigs];
-                      const tools = updated[currentAgentConfigIdx].allowedTools;
-                      if (tools.includes(tool.id)) {
-                        updated[currentAgentConfigIdx].allowedTools = tools.filter(t => t !== tool.id);
-                      } else {
-                        updated[currentAgentConfigIdx].allowedTools = [...tools, tool.id];
-                      }
-                      setAgentConfigs(updated);
-                    }}
-                    style={{ padding: "0.5rem 0.75rem" }}
-                  >
-                    <div className="skill-name" style={{ fontSize: "0.85rem" }}>{tool.name}</div>
-                  </div>
-                ))}
-              </div>
+              <ToolPolicyEditor
+                policy={currentAgent.toolPolicy}
+                onChange={(nextPolicy) => {
+                  const updated = [...agentConfigs];
+                  updated[currentAgentConfigIdx].toolPolicy = nextPolicy;
+                  setAgentConfigs(updated);
+                }}
+                title="Tool Access"
+                description="Per-agent overrides follow the same OpenClaw tool profile model."
+                showElevatedToggle
+              />
             </div>
 
             {/* Cron Jobs */}
@@ -3661,7 +3643,7 @@ Managed by Clawnetes.`,
                   soulMd: "",
                   toolsMd: "",
                   agentsMd: "",
-                  allowedTools: [],
+                  toolPolicy: DEFAULT_TOOL_POLICY,
                   cronJobs: [],
                 };
                 setAgentConfigs([...agentConfigs, newAgent]);

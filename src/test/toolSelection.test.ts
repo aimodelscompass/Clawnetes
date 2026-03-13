@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { AVAILABLE_SKILLS } from "../presets/availableSkills";
 import {
-  CORE_TOOL_OPTIONS,
+  TOOL_DEFINITIONS,
+  deriveToolPolicyFromLegacy,
   getSkillIdSet,
   normalizeSkillAndToolSelection,
+  normalizeToolPolicy,
   sanitizeAllowedTools,
 } from "../utils/toolSelection";
 
@@ -20,7 +22,7 @@ describe("toolSelection", () => {
       ),
     ).toEqual({
       skills: ["github", "weather"],
-      allowedTools: ["filesystem"],
+      allowedTools: ["read", "write", "edit", "apply_patch"],
     });
   });
 
@@ -40,11 +42,31 @@ describe("toolSelection", () => {
   it("strips skill ids when sanitizing allowed tools", () => {
     expect(
       sanitizeAllowedTools(["browser", "github", "network", "github"], knownSkillIds),
-    ).toEqual(["browser", "network"]);
+    ).toEqual(["browser", "web_search", "web_fetch"]);
   });
 
-  it("keeps core tool ids distinct from skill ids", () => {
-    const overlap = CORE_TOOL_OPTIONS.filter((tool) => knownSkillIds.has(tool.id));
+  it("keeps tool ids distinct from skill ids", () => {
+    const overlap = TOOL_DEFINITIONS.filter((tool) => knownSkillIds.has(tool.id));
     expect(overlap).toEqual([]);
+  });
+
+  it("maps legacy all-tools mode to the full profile", () => {
+    expect(deriveToolPolicyFromLegacy("all", [], [], knownSkillIds)).toEqual({
+      profile: "full",
+      allow: [],
+      deny: [],
+      elevatedEnabled: false,
+    });
+  });
+
+  it("normalizes alias ids inside tool policies", () => {
+    expect(
+      normalizeToolPolicy({ profile: "minimal", allow: ["sessions_status"], deny: [] }, knownSkillIds),
+    ).toEqual({
+      profile: "minimal",
+      allow: ["session_status"],
+      deny: [],
+      elevatedEnabled: false,
+    });
   });
 });

@@ -49,12 +49,21 @@ struct SubagentConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct AgentToolsConfig {
+    profile: Option<String>,
+    allow: Option<Vec<String>>,
+    deny: Option<Vec<String>>,
+    elevated: Option<ElevatedToolConfig>,
     #[serde(rename = "agentToAgent")]
     agent_to_agent: Option<AgentToAgentConfig>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct AgentToAgentConfig {
+    enabled: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct ElevatedToolConfig {
     enabled: bool,
 }
 
@@ -88,6 +97,7 @@ struct CurrentConfig {
     provider_auths: std::collections::HashMap<String, ProviderAuthData>,
     sandbox_mode: String,
     tools_mode: String,
+    tools_profile: Option<String>,
     allowed_tools: Vec<String>,
     denied_tools: Vec<String>,
     fallback_models: Vec<String>,
@@ -145,6 +155,7 @@ struct AgentConfig {
     // NEW: Enhanced advanced fields
     sandbox_mode: Option<String>,
     tools_mode: Option<String>,
+    tools_profile: Option<String>,
     allowed_tools: Option<Vec<String>>,
     denied_tools: Option<Vec<String>>,
     fallback_models: Option<Vec<String>>,
@@ -1679,6 +1690,22 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 }
             }
 
+            if let Some(tools) = &agent.tools {
+                if let Ok(tools_value) = serde_json::to_value(tools) {
+                    if let Some(agent_obj_map) = agent_obj.as_object_mut() {
+                        agent_obj_map.insert("tools".to_string(), tools_value);
+                    }
+                }
+            }
+
+            if let Some(subagents) = &agent.subagents {
+                if let Ok(subagents_value) = serde_json::to_value(subagents) {
+                    if let Some(agent_obj_map) = agent_obj.as_object_mut() {
+                        agent_obj_map.insert("subagents".to_string(), subagents_value);
+                    }
+                }
+            }
+
             agents_list.push(agent_obj);
         }
     }
@@ -1851,20 +1878,16 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
             }
         }
     }
-    if let Some(tm) = config.tools_mode.as_deref() {
+    if config.tools_mode.is_some() || config.tools_profile.is_some() {
         let mut tools_obj = serde_json::Map::new();
-        match tm {
-            "allowlist" => {
-                if let Some(tools) = config.allowed_tools.as_ref() {
-                    tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
-                }
-            }
-            "denylist" => {
-                if let Some(tools) = config.denied_tools.as_ref() {
-                    tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
-                }
-            }
-            _ => {}
+        if let Some(profile) = config.tools_profile.as_ref() {
+            tools_obj.insert("profile".to_string(), serde_json::json!(profile));
+        }
+        if let Some(tools) = config.allowed_tools.as_ref() {
+            tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+        }
+        if let Some(tools) = config.denied_tools.as_ref() {
+            tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
         }
         if !tools_obj.is_empty() {
             if let Some(obj) = config_val.as_object_mut() {
@@ -3133,20 +3156,16 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 
     if let Some(obj) = config_json.as_object_mut() {
         // Add tools config
-        if let Some(tm) = config.tools_mode.as_deref() {
+        if config.tools_mode.is_some() || config.tools_profile.is_some() {
             let mut tools_obj = serde_json::Map::new();
-            match tm {
-                "allowlist" => {
-                    if let Some(tools) = config.allowed_tools.as_ref() {
-                        tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
-                    }
-                }
-                "denylist" => {
-                    if let Some(tools) = config.denied_tools.as_ref() {
-                        tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
-                    }
-                }
-                _ => {}
+            if let Some(profile) = config.tools_profile.as_ref() {
+                tools_obj.insert("profile".to_string(), serde_json::json!(profile));
+            }
+            if let Some(tools) = config.allowed_tools.as_ref() {
+                tools_obj.insert("allow".to_string(), serde_json::to_value(tools).unwrap());
+            }
+            if let Some(tools) = config.denied_tools.as_ref() {
+                tools_obj.insert("deny".to_string(), serde_json::to_value(tools).unwrap());
             }
             if !tools_obj.is_empty() {
                 obj.insert("tools".to_string(), serde_json::Value::Object(tools_obj));
@@ -4240,6 +4259,10 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     };
 
     let tools = oc_config.get("tools").unwrap_or(&empty_json);
+    let tools_profile = tools
+        .get("profile")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let allowed_tools: Vec<String> = tools
         .get("allow")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -4248,7 +4271,9 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         .get("deny")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
-    let tools_mode = if !allowed_tools.is_empty() {
+    let tools_mode = if tools_profile.as_deref() == Some("full") && denied_tools.is_empty() {
+        "all"
+    } else if !allowed_tools.is_empty() || tools_profile.is_some() {
         "allowlist"
     } else if !denied_tools.is_empty() {
         "denylist"
@@ -4406,7 +4431,9 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
                 heartbeat_md: a_heartbeat_md,
                 memory_md: a_memory_md,
                 subagents: None,
-                tools: None,
+                tools: agent_val
+                    .get("tools")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok()),
             });
             if let Some(agent_provider) =
                 agent_configs.last().and_then(|a| a.model.split('/').next())
@@ -4538,6 +4565,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         provider_auths,
         sandbox_mode: mapped_sandbox.to_string(),
         tools_mode: tools_mode.to_string(),
+        tools_profile,
         allowed_tools,
         denied_tools,
         fallback_models: fallbacks,

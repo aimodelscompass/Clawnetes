@@ -1,22 +1,24 @@
-# Remove Skill Duplication From Allowed Tools
+# Granular Tool Controls
 
 ## Goal
-- Ensure skills are configured only in the Skills selectors and do not reappear under Allowed Tools.
-- Prevent skill IDs from being saved into `allowed_tools`.
-- Migrate existing configs that incorrectly stored skill IDs in `allowed_tools` by enabling those skills automatically.
+- Replace the coarse allowlist/denylist/all tool UI with an OpenClaw-aligned granular tool policy editor.
+- Support workspace-level and per-agent tool policies.
+- Load and save `tools.profile`, `tools.allow`, and `tools.deny` while preserving compatibility with existing configs.
+- Migrate legacy synthetic tool ids and skill ids into the new policy model without breaking saved setups.
 
 ## Progress
-- [x] Inspect the wizard UI, config load flow, and payload construction paths.
-- [x] Confirm the duplication source in both single-agent and multi-agent flows.
-- [x] Add shared normalization helpers for tool/skill migration and sanitization.
-- [x] Update the Allowed Tools UI to show only real tools.
-- [x] Apply migration/sanitization during config load, comparison, and save.
-- [x] Add tests for migration, sanitization, and tool-only UI options.
+- [x] Inspect current frontend/backend tool handling and existing config shapes.
+- [x] Confirm OpenClaw tool/profile semantics from `https://docs.openclaw.ai/tools`.
+- [x] Add shared frontend tool catalog and normalization helpers.
+- [x] Replace wizard and agent tool selectors with the granular policy editor UI.
+- [x] Extend frontend types and payload construction for profile/allow/deny policies.
+- [x] Extend Rust load/save paths for top-level and per-agent tool policies.
+- [x] Add or update tests for normalization, payload mapping, and UI behavior.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [x] Commit and push after validation succeeds.
+- [ ] Commit and push after validation succeeds.
 
 ## Notes
-- Existing unrelated worktree changes must be preserved.
-- Known skill IDs found inside `allowed_tools` should move into `skills`.
-- Unknown non-skill tool IDs should remain untouched.
+- Preserve unrelated worktree changes.
+- Prefer the OpenClaw docs as the source of truth for built-in tool ids and profile definitions.
+- Keep old `filesystem` / `terminal` / `browser` / `network` selections readable by mapping them into real tool ids.

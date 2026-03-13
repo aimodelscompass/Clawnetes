@@ -39,6 +39,22 @@ export interface DropdownOption {
   emoji?: string;
 }
 
+export type ToolProfileId = "minimal" | "coding" | "messaging" | "full";
+
+export interface ToolPolicy {
+  profile: ToolProfileId | null;
+  allow: string[];
+  deny: string[];
+  elevatedEnabled?: boolean;
+}
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  description: string;
+  section: string;
+}
+
 export interface AgentConfigData {
   id: string;
   name: string;
@@ -52,7 +68,7 @@ export interface AgentConfigData {
   soulMd: string;
   toolsMd: string;
   agentsMd: string;
-  allowedTools: string[];
+  toolPolicy: ToolPolicy;
   cronJobs: CronJobConfig[];
   persona?: string;
 }
@@ -98,8 +114,7 @@ export interface AgentTypePreset {
   fallbackModels: string[];
   skills: string[];
   sandboxMode: string;
-  toolsMode: string;
-  allowedTools: string[];
+  toolPolicy: ToolPolicy;
   heartbeatMode: string;
   idleTimeoutMs: number;
   enableFallbacks: boolean;
@@ -171,7 +186,8 @@ export interface ConfigPayload {
   service_keys: Record<string, string>;
   provider_auths?: Record<string, ProviderAuthConfig>;
   sandbox_mode: string | null;
-  tools_mode: string | null;
+  tools_mode?: string | null;
+  tools_profile?: ToolProfileId | null;
   allowed_tools: string[] | null;
   denied_tools: string[] | null;
   fallback_models: string[] | null;
@@ -217,6 +233,13 @@ export interface AgentPayloadData {
     allowAgents: string[];
   } | null;
   tools?: {
+    profile?: ToolProfileId | null;
+    allow?: string[] | null;
+    deny?: string[] | null;
     agentToAgent?: { enabled: boolean };
+    elevated?: { enabled: boolean };
   } | null;
+  allowed_tools?: string[] | null;
+  denied_tools?: string[] | null;
+  tools_profile?: ToolProfileId | null;
 }
