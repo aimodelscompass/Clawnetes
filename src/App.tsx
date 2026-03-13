@@ -10,6 +10,7 @@ import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
 import { getAgentSessionInitIds } from "./utils/agentSessions";
+import { getAdvancedTransitionAction } from "./utils/licenseGate";
 import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
@@ -17,8 +18,7 @@ import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 
 function App() {
-  const handleAdvancedTransition = async () => {
-    // License key requirement removed for all installation types
+  const continueToAdvancedSettings = async () => {
     setMode("advanced");
     setPairingStatus("");
     setSkipBasicConfig(true);
@@ -35,6 +35,21 @@ function App() {
       }
     }
     setStep(10.5);
+  };
+
+  const handleAdvancedTransition = async () => {
+    const nextAction = getAdvancedTransitionAction(licenseStatusLoaded, licenseUnlocked);
+    if (nextAction === "wait") {
+      return;
+    }
+
+    if (nextAction === "prompt") {
+      setLicenseError(licenseStatusError);
+      setShowLicenseModal(true);
+      return;
+    }
+
+    await continueToAdvancedSettings();
   };
 
   const [step, setStep] = useState(0.5); // Start at Welcome page
@@ -78,6 +93,13 @@ function App() {
   const [maintenanceStatus, setMaintenanceStatus] = useState("");
   const [selectedMaint, setSelectedMaint] = useState<string>("repair");
   const [maintCompleted, setMaintCompleted] = useState(false);
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [verifyingLicense, setVerifyingLicense] = useState(false);
+  const [licenseError, setLicenseError] = useState("");
+  const [licenseUnlocked, setLicenseUnlocked] = useState(false);
+  const [licenseStatusLoaded, setLicenseStatusLoaded] = useState(false);
+  const [licenseStatusError, setLicenseStatusError] = useState("");
 
   // Service Keys State
   const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
@@ -281,6 +303,33 @@ function App() {
   });
 
   useEffect(() => { checkSystem(true); }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSavedLicenseState = async () => {
+      try {
+        const unlocked = await invoke<boolean>("has_saved_license");
+        if (cancelled) return;
+        setLicenseUnlocked(unlocked);
+        setLicenseStatusError("");
+      } catch (e) {
+        if (cancelled) return;
+        setLicenseUnlocked(false);
+        setLicenseStatusError(String(e));
+      } finally {
+        if (!cancelled) {
+          setLicenseStatusLoaded(true);
+        }
+      }
+    };
+
+    loadSavedLicenseState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (step === 17) {
@@ -4368,8 +4417,8 @@ Managed by Clawnetes.`,
                       Open Web Dashboard
                     </button>
                     {mode !== "advanced" && (
-                      <button className="secondary" onClick={handleAdvancedTransition}>
-                        Continue to Advanced Settings
+                      <button className="secondary" onClick={handleAdvancedTransition} disabled={!licenseStatusLoaded}>
+                        {licenseStatusLoaded ? "Continue to Advanced Settings" : "Checking license..."}
                       </button>
                     )}
                     <button className="secondary" onClick={() => invoke("close_app")}>
@@ -4427,6 +4476,84 @@ Managed by Clawnetes.`,
           {renderStep()}
         </div>
       </main>
+
+      {showLicenseModal && (
+        <div className="modal-overlay" style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.7)", zIndex: 1000,
+          display: "flex", justifyContent: "center", alignItems: "center"
+        }}>
+          <div className="modal-content" style={{
+            backgroundColor: "var(--bg-card)", padding: "2rem", borderRadius: "12px",
+            width: "400px", maxWidth: "90%", border: "1px solid var(--border)"
+          }}>
+            <h3 style={{ marginTop: 0 }}>Advanced Setup License</h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+              Advanced features require a license key. You can purchase one from Gumroad.
+            </p>
+
+            <div className="form-group" style={{ marginTop: "1.5rem" }}>
+              <label>License Key</label>
+              <input
+                value={licenseKey}
+                onChange={(e) => setLicenseKey(e.target.value)}
+                placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
+                autoFocus
+              />
+            </div>
+
+            <div style={{ marginTop: "1rem", fontSize: "0.85rem" }}>
+              <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawsetup"); }}
+                style={{ color: "var(--primary)" }}
+              >
+                Get a license key &rarr;
+              </a>
+            </div>
+
+            {licenseError && (
+              <div className="error" style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--error)" }}>
+                {licenseError}
+              </div>
+            )}
+
+            <div className="button-group" style={{ marginTop: "2rem" }}>
+              <button
+                className="primary"
+                disabled={!licenseKey.trim() || verifyingLicense}
+                onClick={async () => {
+                  setVerifyingLicense(true);
+                  setLicenseError("");
+                  try {
+                    await invoke("verify_and_store_license", { key: licenseKey.trim() });
+                    setLicenseUnlocked(true);
+                    setLicenseStatusError("");
+                    setShowLicenseModal(false);
+                    setVerifyingLicense(false);
+                    await continueToAdvancedSettings();
+                  } catch (e) {
+                    setVerifyingLicense(false);
+                    setLicenseError(String(e));
+                  }
+                }}
+              >
+                {verifyingLicense ? "Verifying..." : "Verify & Continue"}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setShowLicenseModal(false);
+                  setLicenseError("");
+                }}
+                disabled={verifyingLicense}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
