@@ -1,15 +1,14 @@
-# Provider Auth Cleanup Plan
+# Connect Brain Duplicate Auth Fix Plan
 
 ## Objective
-- Simplify provider auth selection UI.
-- Remove unsupported Google Vertex and deprecated browser auth options.
-- Preserve Anthropic API key and pasted setup-token flows.
+- Remove the duplicate provider authentication block from the Connect Brain wizard step.
+- Keep the existing layout and behavior intact apart from showing auth only once under the provider selector.
+- Add regression coverage for hosted providers so this duplicate render does not return.
 
 ## Implementation Outline
-- Update frontend provider auth option catalog and provider/model mappings.
-- Refactor `App.tsx` to render inline provider auth controls without the boxed wrapper or generic auth-method dropdown.
-- Remove Vertex AI from provider/model datasets.
-- Update Rust auth normalization and deprecated-provider handling.
-- Add/update TypeScript and Rust tests.
-- Run `npm test` and `npm run tauri dev`.
-- Commit and push once checks pass.
+- Update `src/App.tsx` step `8` to keep only the top `renderProviderAuthEditor(...)` call.
+- Preserve existing model selection, thinking level, and hosted/local helper text.
+- Add a wizard navigation test that reaches Connect Brain and verifies a single auth editor for Anthropic and OpenAI.
+- Run `npm test`.
+- Run `npm run tauri dev`.
+- Commit and push after validation succeeds.

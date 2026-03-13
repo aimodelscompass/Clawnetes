@@ -2355,11 +2355,6 @@ Managed by Clawnetes.`,
               </div>
             )}
 
-            {!["ollama", "lmstudio", "local"].includes(provider) && (
-              renderProviderAuthEditor(provider)
-            )}
-
-
             {["ollama", "lmstudio", "local"].includes(provider) && (
               <p className="input-hint" style={{ marginBottom: "1rem", textAlign: "center", color: "var(--success)" }}>
                 No API key required for local providers.
