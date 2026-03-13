@@ -7,4 +7,4 @@
 - [x] Add or update regression tests for local tool serialization and session bootstrap triggering.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [ ] Commit and push changes.
+- [x] Commit and push changes.
