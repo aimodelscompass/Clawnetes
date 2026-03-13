@@ -25,6 +25,52 @@ vi.mock("@tauri-apps/api/dialog", () => ({
 
 import App from "../App";
 
+async function navigateToConnectBrain() {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByText("Start Setup")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByText("Start Setup"));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => {
+    expect(screen.getByText("System Check")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => {
+    expect(screen.getByText("Security Baseline")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByRole("button", { name: "I Understand" }));
+  await waitFor(() => {
+    expect(screen.getByText("Your Identity")).toBeInTheDocument();
+  });
+
+  await user.type(screen.getByPlaceholderText("e.g. David"), "Mulu");
+  await user.click(screen.getByRole("button", { name: "Next" }));
+
+  await waitFor(() => {
+    expect(screen.getByText("Agent Profile")).toBeInTheDocument();
+  });
+
+  await user.type(screen.getByPlaceholderText("e.g. Jeeves"), "Claw");
+  await user.click(screen.getByRole("button", { name: "Next" }));
+
+  await waitFor(() => {
+    expect(screen.getByText("Agent Type")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => {
+    expect(screen.getByText("Connect Brain")).toBeInTheDocument();
+  });
+
+  return user;
+}
+
 describe("Wizard Step List", () => {
   it("renders the welcome page by default", async () => {
     render(<App />);
@@ -79,6 +125,24 @@ describe("Business Functions page", () => {
     await waitFor(() => {
       expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
     });
+  });
+});
+
+describe("Connect Brain auth editor", () => {
+  it("renders a single auth block for Anthropic and OpenAI", async () => {
+    const user = await navigateToConnectBrain();
+
+    expect(screen.getAllByText("Claude Code Setup Token")).toHaveLength(1);
+    expect(screen.getAllByPlaceholderText("Paste your anthropic API key")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: /Anthropic/i }));
+    await user.click(screen.getByRole("button", { name: "OpenAI" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByPlaceholderText("Paste your openai API key")).toHaveLength(1);
   });
 });
 

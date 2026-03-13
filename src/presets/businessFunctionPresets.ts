@@ -1,4 +1,14 @@
-import { BusinessFunctionPreset } from "../types";
+import { BusinessFunctionPreset, ToolPolicy } from "../types";
+
+const WEB_POLICY: ToolPolicy = { profile: "minimal", allow: ["browser", "web_search", "web_fetch"], deny: [] };
+const ORCHESTRATOR_WEB_POLICY: ToolPolicy = {
+  profile: "messaging",
+  allow: ["browser", "web_search", "web_fetch", "agents_list", "sessions_spawn"],
+  deny: [],
+};
+const MESSAGING_WEB_POLICY: ToolPolicy = { profile: "messaging", allow: ["browser", "web_search", "web_fetch"], deny: [] };
+const CODING_POLICY: ToolPolicy = { profile: "coding", allow: [], deny: [] };
+const CODING_WEB_POLICY: ToolPolicy = { profile: "coding", allow: ["browser", "web_search", "web_fetch"], deny: [] };
 
 export const BUSINESS_FUNCTION_PRESETS: Record<string, BusinessFunctionPreset> = {
   "personal-productivity": {
@@ -11,6 +21,7 @@ export const BUSINESS_FUNCTION_PRESETS: Record<string, BusinessFunctionPreset> =
       name: "Productivity Orchestrator",
       model: "anthropic/claude-opus-4-6",
       skills: ["himalaya", "apple-notes", "apple-reminders", "web-search"],
+      toolPolicy: ORCHESTRATOR_WEB_POLICY,
       identityMd: `# IDENTITY.md - Productivity Orchestrator
 - **Name:** Productivity Hub
 - **Emoji:** 📋
@@ -49,8 +60,9 @@ Track user preferences for productivity tools and workflows.`,
       {
         id: "calendar",
         name: "Calendar Manager",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["apple-reminders"],
+        toolPolicy: WEB_POLICY,
         identityMd: `# IDENTITY.md - Calendar Manager
 - **Name:** Calendar Manager
 - **Emoji:** 📅
@@ -73,8 +85,9 @@ Track meeting patterns, preferred meeting times, and recurring events.`,
       {
         id: "email",
         name: "Email Manager",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["himalaya"],
+        toolPolicy: MESSAGING_WEB_POLICY,
         identityMd: `# IDENTITY.md - Email Manager
 - **Name:** Email Manager
 - **Emoji:** 📧
@@ -109,6 +122,7 @@ Track email contacts, response patterns, and communication preferences.`,
       name: "Dev Orchestrator",
       model: "anthropic/claude-opus-4-6",
       skills: ["github", "coding-agent", "web-search"],
+      toolPolicy: CODING_WEB_POLICY,
       identityMd: `# IDENTITY.md - Dev Orchestrator
 - **Name:** Dev Orchestrator
 - **Emoji:** 💻
@@ -147,8 +161,9 @@ Track active projects, tech stacks, and development conventions.`,
       {
         id: "code-review",
         name: "Code Reviewer",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["github", "coding-agent"],
+        toolPolicy: CODING_WEB_POLICY,
         identityMd: `# IDENTITY.md - Code Reviewer
 - **Name:** Code Reviewer
 - **Emoji:** 🔍
@@ -171,8 +186,9 @@ Track code review patterns, common issues, and project conventions.`,
       {
         id: "testing",
         name: "Testing Agent",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["coding-agent"],
+        toolPolicy: CODING_POLICY,
         identityMd: `# IDENTITY.md - Testing Agent
 - **Name:** Test Runner
 - **Emoji:** 🧪
@@ -207,6 +223,7 @@ Track test patterns, coverage metrics, and testing frameworks used.`,
       name: "Finance Orchestrator",
       model: "anthropic/claude-opus-4-6",
       skills: ["web-search", "coding-agent"],
+      toolPolicy: CODING_WEB_POLICY,
       identityMd: `# IDENTITY.md - Finance Orchestrator
 - **Name:** Finance Hub
 - **Emoji:** 📊
@@ -244,8 +261,9 @@ Track financial metrics, market trends, and analysis patterns.`,
       {
         id: "data-analysis",
         name: "Data Analyst",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["coding-agent", "web-search"],
+        toolPolicy: CODING_WEB_POLICY,
         identityMd: `# IDENTITY.md - Data Analyst
 - **Name:** Data Analyst
 - **Emoji:** 📈
@@ -268,8 +286,9 @@ Track data sources, analysis templates, and key metrics.`,
       {
         id: "reporting",
         name: "Report Generator",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["coding-agent"],
+        toolPolicy: CODING_WEB_POLICY,
         identityMd: `# IDENTITY.md - Report Generator
 - **Name:** Report Generator
 - **Emoji:** 📄
@@ -304,6 +323,7 @@ Track report templates, formatting preferences, and distribution lists.`,
       name: "Social Media Orchestrator",
       model: "anthropic/claude-opus-4-6",
       skills: ["web-search", "slack"],
+      toolPolicy: ORCHESTRATOR_WEB_POLICY,
       identityMd: `# IDENTITY.md - Social Media Orchestrator
 - **Name:** Social Hub
 - **Emoji:** 📱
@@ -342,8 +362,9 @@ Track brand voice, content calendar, and engagement metrics.`,
       {
         id: "research",
         name: "Research Agent",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
+        toolPolicy: WEB_POLICY,
         identityMd: `# IDENTITY.md - Research Agent
 - **Name:** Research Agent
 - **Emoji:** 🔬
@@ -366,8 +387,9 @@ Track research findings, trend patterns, and competitor insights.`,
       {
         id: "content",
         name: "Content Creator",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
+        toolPolicy: WEB_POLICY,
         identityMd: `# IDENTITY.md - Content Creator
 - **Name:** Content Creator
 - **Emoji:** ✍️
@@ -402,6 +424,7 @@ Track brand voice guidelines, content performance, and audience preferences.`,
       name: "CRM Orchestrator",
       model: "anthropic/claude-opus-4-6",
       skills: ["himalaya", "trello", "web-search"],
+      toolPolicy: ORCHESTRATOR_WEB_POLICY,
       identityMd: `# IDENTITY.md - CRM Orchestrator
 - **Name:** CRM Hub
 - **Emoji:** 🤝
@@ -440,8 +463,9 @@ Track contacts, deal stages, and follow-up schedules.`,
       {
         id: "contacts",
         name: "Contact Manager",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
+        toolPolicy: WEB_POLICY,
         identityMd: `# IDENTITY.md - Contact Manager
 - **Name:** Contact Manager
 - **Emoji:** 📇
@@ -464,8 +488,9 @@ Track contact details, interaction history, and relationship status.`,
       {
         id: "followup",
         name: "Follow-up Agent",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["himalaya", "apple-reminders"],
+        toolPolicy: MESSAGING_WEB_POLICY,
         identityMd: `# IDENTITY.md - Follow-up Agent
 - **Name:** Follow-up Agent
 - **Emoji:** 🔔
@@ -500,6 +525,7 @@ Track follow-up schedules, response patterns, and outreach sequences.`,
       name: "Support Orchestrator",
       model: "anthropic/claude-opus-4-6",
       skills: ["himalaya", "slack", "web-search"],
+      toolPolicy: ORCHESTRATOR_WEB_POLICY,
       identityMd: `# IDENTITY.md - Support Orchestrator
 - **Name:** Support Hub
 - **Emoji:** 🎧
@@ -539,8 +565,9 @@ Track common issues, resolution patterns, and customer satisfaction metrics.`,
       {
         id: "triage",
         name: "Ticket Triage",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["web-search"],
+        toolPolicy: WEB_POLICY,
         identityMd: `# IDENTITY.md - Ticket Triage
 - **Name:** Ticket Triage
 - **Emoji:** 🏷️
@@ -563,8 +590,9 @@ Track ticket patterns, common issues, and routing rules.`,
       {
         id: "response",
         name: "Response Drafter",
-        model: "anthropic/claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-6",
         skills: ["himalaya"],
+        toolPolicy: MESSAGING_WEB_POLICY,
         identityMd: `# IDENTITY.md - Response Drafter
 - **Name:** Response Drafter
 - **Emoji:** 💬

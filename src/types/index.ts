@@ -18,6 +18,10 @@ export interface SkillOption {
   desc: string;
   requiresAuth?: boolean;
   authPlaceholder?: string;
+  authMode?: "api_key" | "oauth";
+  oauthBaseProvider?: string;
+  oauthMethod?: string;
+  oauthProviderId?: string;
 }
 
 export interface RadioCardOption {
@@ -35,6 +39,23 @@ export interface DropdownOption {
   emoji?: string;
 }
 
+export type ToolProfileId = "minimal" | "coding" | "messaging" | "full";
+
+export interface ToolPolicy {
+  profile: ToolProfileId | null;
+  allow: string[];
+  deny: string[];
+  elevatedEnabled?: boolean;
+  inherit?: boolean;
+}
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  description: string;
+  section: string;
+}
+
 export interface AgentConfigData {
   id: string;
   name: string;
@@ -48,7 +69,7 @@ export interface AgentConfigData {
   soulMd: string;
   toolsMd: string;
   agentsMd: string;
-  allowedTools: string[];
+  toolPolicy: ToolPolicy;
   cronJobs: CronJobConfig[];
   persona?: string;
 }
@@ -64,6 +85,14 @@ export interface ServiceKeyConfig {
   id: string;
   name: string;
   placeholder: string;
+}
+
+export interface ProviderAuthConfig {
+  auth_method: string;
+  token: string;
+  profile_key: string | null;
+  profile: Record<string, unknown> | null;
+  oauth_provider_id: string | null;
 }
 
 export interface RemoteConfig {
@@ -86,8 +115,7 @@ export interface AgentTypePreset {
   fallbackModels: string[];
   skills: string[];
   sandboxMode: string;
-  toolsMode: string;
-  allowedTools: string[];
+  toolPolicy: ToolPolicy;
   heartbeatMode: string;
   idleTimeoutMs: number;
   enableFallbacks: boolean;
@@ -115,6 +143,7 @@ export interface SubAgentPreset {
   name: string;
   model: string;
   skills: string[];
+  toolPolicy: ToolPolicy;
   identityMd: string;
   soulMd: string;
   toolsMd: string;
@@ -157,8 +186,10 @@ export interface ConfigPayload {
   node_manager: string;
   skills: string[];
   service_keys: Record<string, string>;
+  provider_auths?: Record<string, ProviderAuthConfig>;
   sandbox_mode: string | null;
-  tools_mode: string | null;
+  tools_mode?: string | null;
+  tools_profile?: ToolProfileId | null;
   allowed_tools: string[] | null;
   denied_tools: string[] | null;
   fallback_models: string[] | null;
@@ -204,6 +235,12 @@ export interface AgentPayloadData {
     allowAgents: string[];
   } | null;
   tools?: {
-    agentToAgent?: { enabled: boolean };
+    profile?: ToolProfileId | null;
+    allow?: string[] | null;
+    deny?: string[] | null;
+    elevated?: { enabled: boolean };
   } | null;
+  allowed_tools?: string[] | null;
+  denied_tools?: string[] | null;
+  tools_profile?: ToolProfileId | null;
 }

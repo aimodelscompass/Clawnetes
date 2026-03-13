@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { MODELS_BY_PROVIDER, DEFAULT_MODELS, PROVIDER_LOGOS } from "../presets/modelsByProvider";
 
 describe("ModelsByProvider - New Local Providers", () => {
+  it("uses refreshed remote defaults", () => {
+    expect(DEFAULT_MODELS["openai"]).toBe("openai/gpt-5.4");
+    expect(DEFAULT_MODELS["google"]).toBe("google/gemini-3.1-pro-preview");
+  });
+
   it("has ollama in DEFAULT_MODELS", () => {
     expect(DEFAULT_MODELS["ollama"]).toBe("ollama/llama3.2");
   });
@@ -19,11 +24,17 @@ describe("ModelsByProvider - New Local Providers", () => {
     expect(MODELS_BY_PROVIDER["ollama"].length).toBeGreaterThanOrEqual(9);
   });
 
-  it("ollama models include llama3.2, mistral, deepseek-r1", () => {
+  it("ollama models include llama3.2, mistral, deepseek coder", () => {
     const ollamaIds = MODELS_BY_PROVIDER["ollama"].map(m => m.value);
     expect(ollamaIds).toContain("ollama/llama3.2");
     expect(ollamaIds).toContain("ollama/mistral");
-    expect(ollamaIds).toContain("ollama/deepseek-r1");
+    expect(ollamaIds).toContain("ollama/deepseek-coder-v2");
+  });
+
+  it("uses refreshed Anthropic labels", () => {
+    const anthropicLabels = MODELS_BY_PROVIDER["anthropic"].map(m => m.label);
+    expect(anthropicLabels).toContain("Claude Opus 4.6");
+    expect(anthropicLabels).toContain("Claude Sonnet 4.6");
   });
 
   it("has lmstudio models list", () => {

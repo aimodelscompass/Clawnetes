@@ -9,8 +9,12 @@ import { AVAILABLE_SKILLS } from "./presets/availableSkills";
 import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
+import { getAgentSessionInitIds } from "./utils/agentSessions";
+import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
+import ToolPolicyEditor from "./components/ToolPolicyEditor";
+import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import Dropdown from "./components/Dropdown";
-import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig } from "./types";
+import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 
 function App() {
   const handleAdvancedTransition = async () => {
@@ -77,6 +81,14 @@ function App() {
 
   // Service Keys State
   const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
+  const [providerAuths, setProviderAuths] = useState<Record<string, ProviderAuthConfig>>({
+    anthropic: createDefaultProviderAuth("anthropic"),
+  });
+  const [providerAuthBusy, setProviderAuthBusy] = useState<Record<string, boolean>>({});
+  const [providerAuthErrors, setProviderAuthErrors] = useState<Record<string, string>>({});
+  const [oauthCompletionRunning, setOauthCompletionRunning] = useState(false);
+  const [oauthCompletionStarted, setOauthCompletionStarted] = useState(false);
+  const [oauthCompletionResults, setOauthCompletionResults] = useState<Record<string, { status: "pending" | "success" | "error"; message?: string }>>({});
   const [currentServiceIdx, setCurrentServiceIdx] = useState(0);
   const [isConfiguringService, setIsConfiguringService] = useState<boolean | null>(false);
 
@@ -99,9 +111,7 @@ function App() {
 
   // NEW: Security Best Practices (Step 11)
   const [sandboxMode, setSandboxMode] = useState("none");
-  const [toolsMode, setToolsMode] = useState("allowlist");
-  const [allowedTools, setAllowedTools] = useState<string[]>(["filesystem", "terminal", "browser"]);
-  const [deniedTools, setDeniedTools] = useState<string[]>([]);
+  const [toolPolicy, setToolPolicy] = useState<ToolPolicy>(DEFAULT_TOOL_POLICY);
 
   // NEW: Fallback Models (Step 12)
   const [enableFallbacks, setEnableFallbacks] = useState(false);
@@ -186,6 +196,7 @@ function App() {
 
 
   const availableSkills = AVAILABLE_SKILLS;
+  const availableSkillIds = getSkillIdSet(availableSkills);
 
   // Apply agent type preset - sets all relevant state from a preset
   function applyAgentTypePreset(typeId: AgentTypeId) {
@@ -208,8 +219,7 @@ function App() {
 
     // Set security
     setSandboxMode(preset.sandboxMode);
-    setToolsMode(preset.toolsMode);
-    setAllowedTools(preset.allowedTools);
+    setToolPolicy(normalizeToolPolicy(preset.toolPolicy));
 
     // Set session
     setHeartbeatMode(preset.heartbeatMode);
@@ -259,6 +269,17 @@ function App() {
     { id: 17, name: "Pairing" }
   ];
 
+  const deferredOAuthQueue = buildDeferredOAuthQueue({
+    referencedProviders: buildReferencedProviders({
+      primaryModel: model,
+      fallbackModels: enableFallbacks ? fallbackModels.filter(Boolean) : [],
+      agentConfigs,
+    }),
+    providerAuths,
+    selectedSkills,
+    availableSkills,
+  });
+
   useEffect(() => { checkSystem(true); }, []);
 
   useEffect(() => {
@@ -279,13 +300,30 @@ function App() {
     }
   }, [step]);
 
-  // Update default auth method when provider changes
   useEffect(() => {
-    if (provider === "anthropic") setAuthMethod("token");
-    else if (provider === "google") setAuthMethod("token");
-    else if (provider === "openai") setAuthMethod("token");
-    else setAuthMethod("token");
+    if (step !== 17) return;
+    if (deferredOAuthQueue.length === 0) return;
+    if (oauthCompletionRunning || oauthCompletionStarted) return;
+
+    runDeferredOAuthQueue().catch((e) => {
+      console.error("Deferred OAuth flow failed:", e);
+      setOauthCompletionRunning(false);
+    });
+  }, [step, deferredOAuthQueue, oauthCompletionRunning, oauthCompletionStarted]);
+
+  useEffect(() => {
+    setProviderAuths(prev => normalizeProviderAuths(prev, provider, apiKey, authMethod));
   }, [provider]);
+
+  useEffect(() => {
+    const current = providerAuths[provider] || createDefaultProviderAuth(provider);
+    if (authMethod !== current.auth_method) {
+      setAuthMethod(current.auth_method);
+    }
+    if (apiKey !== current.token) {
+      setApiKey(current.token);
+    }
+  }, [provider, providerAuths, authMethod, apiKey]);
 
   // Workspace change detection
   useEffect(() => {
@@ -295,6 +333,220 @@ function App() {
       soulMd !== initialWorkspace.soul;
     setWorkspaceModified(modified);
   }, [identityMd, userMd, soulMd, initialWorkspace]);
+
+  function updateProviderAuth(targetProvider: string, patch: Partial<ProviderAuthConfig> | ((current: ProviderAuthConfig) => ProviderAuthConfig)) {
+    const normalizedProvider = getBaseProvider(targetProvider);
+    setProviderAuths(prev => {
+      const current = prev[normalizedProvider] || createDefaultProviderAuth(normalizedProvider);
+      const next = typeof patch === "function" ? patch(current) : { ...current, ...patch };
+      return { ...prev, [normalizedProvider]: next };
+    });
+  }
+
+  function getProviderAuth(targetProvider: string): ProviderAuthConfig {
+    return providerAuths[getBaseProvider(targetProvider)] || createDefaultProviderAuth(getBaseProvider(targetProvider));
+  }
+
+  function setProviderAuthMethod(targetProvider: string, value: string) {
+    const normalizedProvider = getBaseProvider(targetProvider);
+    const oauthOption = OAUTH_METHODS_BY_PROVIDER[normalizedProvider]?.find(option => option.value === value);
+    setProviderAuths(prev => {
+      const current = prev[normalizedProvider] || createDefaultProviderAuth(normalizedProvider);
+      const nextProviderAuths = {
+        ...prev,
+        [normalizedProvider]: {
+          ...current,
+          auth_method: value,
+          oauth_provider_id: oauthOption?.oauthProviderId ?? null,
+          ...(value === "token" || value === "setup-token"
+            ? { profile_key: null, profile: null }
+            : { token: "" }),
+        },
+      };
+      remapAllModelSelections(nextProviderAuths);
+      return nextProviderAuths;
+    });
+  }
+
+  function getProviderDefaultModel(targetProvider: string, auths: Record<string, ProviderAuthConfig> = providerAuths): string {
+    return getDefaultModelForProvider(getBaseProvider(targetProvider), auths, DEFAULT_MODELS);
+  }
+
+  function getProviderModelOptions(targetProvider: string, auths: Record<string, ProviderAuthConfig> = providerAuths) {
+    return getDisplayModelOptions(getBaseProvider(targetProvider), auths, MODELS_BY_PROVIDER);
+  }
+
+  function remapAllModelSelections(nextProviderAuths: Record<string, ProviderAuthConfig>) {
+    setModel(prev => applyModelProviderAuth(prev, nextProviderAuths));
+    setFallbackModels(prev => prev.map(modelRef => applyModelProviderAuth(modelRef, nextProviderAuths)));
+    setAgentConfigs(prev => prev.map(agent => ({
+      ...agent,
+      model: applyModelProviderAuth(agent.model, nextProviderAuths),
+      fallbackModels: agent.fallbackModels.map(modelRef => applyModelProviderAuth(modelRef, nextProviderAuths)),
+    })));
+  }
+
+  async function runDeferredOAuthQueue() {
+    if (oauthCompletionRunning || deferredOAuthQueue.length === 0) return;
+
+    setOauthCompletionRunning(true);
+    setOauthCompletionStarted(true);
+    let nextProviderAuths = { ...providerAuths };
+    let hasSuccessfulAuth = false;
+
+    for (const item of deferredOAuthQueue) {
+      setOauthCompletionResults(prev => ({
+        ...prev,
+        [item.id]: { status: "pending", message: "Opening a terminal for interactive OpenClaw authentication..." },
+      }));
+      setProviderAuthBusy(prev => ({ ...prev, [item.targetProvider]: true }));
+      setProviderAuthErrors(prev => ({ ...prev, [item.targetProvider]: "" }));
+
+      try {
+        const result = await invoke<ProviderAuthConfig>("start_provider_auth", {
+          provider: item.targetProvider,
+          method: item.authMethod,
+          oauthProviderId: item.oauthProviderId,
+        });
+        nextProviderAuths = {
+          ...nextProviderAuths,
+          [item.targetProvider]: result,
+        };
+        hasSuccessfulAuth = true;
+        updateProviderAuth(item.targetProvider, result);
+        setOauthCompletionResults(prev => ({
+          ...prev,
+          [item.id]: { status: "success", message: `Connected via ${item.label}. OpenClaw imported the auth profile.` },
+        }));
+      } catch (e: any) {
+        const message = String(e);
+        setProviderAuthErrors(prev => ({ ...prev, [item.targetProvider]: message }));
+        setOauthCompletionResults(prev => ({
+          ...prev,
+          [item.id]: { status: "error", message },
+        }));
+      } finally {
+        setProviderAuthBusy(prev => ({ ...prev, [item.targetProvider]: false }));
+      }
+    }
+
+    if (hasSuccessfulAuth && targetEnvironment !== "cloud") {
+      try {
+        await invoke("configure_agent", {
+          config: {
+            ...constructConfigPayload(nextProviderAuths),
+            preserve_state: true,
+          },
+        });
+      } catch (e: any) {
+        const message = `OAuth succeeded, but saving the imported auth profile failed: ${String(e)}`;
+        setOauthCompletionResults(prev => {
+          const next = { ...prev };
+          for (const item of deferredOAuthQueue) {
+            if (next[item.id]?.status === "success") {
+              next[item.id] = { status: "error", message };
+            }
+          }
+          return next;
+        });
+      }
+    }
+
+    setOauthCompletionRunning(false);
+  }
+
+  function renderProviderAuthEditor(targetProvider: string, options?: { keyPrefix?: string; showProviderLabel?: boolean; showMissingWarning?: boolean; marginTop?: string }) {
+    const normalizedProvider = getBaseProvider(targetProvider);
+    const auth = getProviderAuth(normalizedProvider);
+    const authOptions = getProviderAuthOptions(normalizedProvider);
+    const selectedAuthOption = authOptions.find((option) => option.value === auth.auth_method);
+    const hasCredential = isOAuthMethod(auth.auth_method) ? !!auth.profile_key : !!auth.token;
+    const providerQueueItem = deferredOAuthQueue.find(item => item.source === "provider" && item.targetProvider === normalizedProvider);
+    const completionResult = providerQueueItem ? oauthCompletionResults[providerQueueItem.id] : null;
+    const showProviderLabel = options?.showProviderLabel ?? true;
+    const showMissingWarning = options?.showMissingWarning ?? true;
+    const buttonStyle = { fontSize: "0.85rem", padding: "0.45rem 0.75rem" };
+
+    return (
+      <div key={`${options?.keyPrefix || "provider-auth"}-${normalizedProvider}`} className="form-group" style={{ marginTop: options?.marginTop || "1rem" }}>
+        {showProviderLabel && (
+          <label>{normalizedProvider.split("-").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")}</label>
+        )}
+
+        {authOptions.length > 1 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: showProviderLabel ? "0.5rem" : "0" }}>
+            {authOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={auth.auth_method === option.value ? "primary" : "secondary"}
+                style={buttonStyle}
+                onClick={() => setProviderAuthMethod(normalizedProvider, option.value)}
+                disabled={providerAuthBusy[normalizedProvider]}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedAuthOption?.description && (
+          <p className="input-hint" style={{ marginTop: "0.5rem" }}>
+            {selectedAuthOption.description}
+          </p>
+        )}
+
+        {(auth.auth_method === "token" || auth.auth_method === "setup-token") && (
+          <div style={{ marginTop: "0.75rem" }}>
+            <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+              {auth.auth_method === "setup-token" ? "Claude Code Setup Token" : normalizedProvider === "google" ? "Gemini API Key" : "API Key"}
+            </label>
+            <input
+              type="password"
+              placeholder={auth.auth_method === "setup-token" ? "Paste `claude setup-token` output" : normalizedProvider === "google" ? "Paste your Gemini API key" : `Paste your ${normalizedProvider} API key`}
+              value={auth.token}
+              onChange={(e) => updateProviderAuth(normalizedProvider, { token: e.target.value })}
+              autoComplete="off"
+            />
+          </div>
+        )}
+
+        {isOAuthMethod(auth.auth_method) && (
+          <div style={{ marginTop: "0.75rem" }}>
+            <p className="input-hint" style={{ marginTop: "0.5rem" }}>
+              {hasCredential
+                ? `Imported profile ${auth.profile_key}.`
+                : checks.openclaw
+                  ? "OAuth will open automatically at the end of setup."
+                  : "OAuth will open automatically after OpenClaw is installed and setup reaches the final step."}
+            </p>
+            {!hasCredential && providerQueueItem && !completionResult && (
+              <p className="input-hint" style={{ marginTop: "0.25rem", color: "var(--text-muted)" }}>
+                Deferred until setup completion.
+              </p>
+            )}
+            {completionResult && (
+              <p className="input-hint" style={{ marginTop: "0.25rem", color: completionResult.status === "error" ? "var(--danger, #dc2626)" : "var(--success)" }}>
+                {completionResult.message}
+              </p>
+            )}
+          </div>
+        )}
+
+        {showMissingWarning && !hasCredential && (
+          <p className="input-hint" style={{ marginTop: "0.5rem", color: "var(--warning, #b45309)" }}>
+            Missing authentication for {normalizedProvider}. You can continue and configure it later, but this provider will not work until auth is supplied.
+          </p>
+        )}
+
+        {providerAuthErrors[normalizedProvider] && (
+          <p className="input-hint" style={{ marginTop: "0.5rem", color: "var(--danger, #dc2626)" }}>
+            {providerAuthErrors[normalizedProvider]}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   async function installLocalNode() {
     setInstallingNode(true);
@@ -506,17 +758,19 @@ function App() {
   // emitted with their useState defaults by constructConfigPayload().
   function normalizeForComparison(payload: any) {
     if (!payload) return payload;
-    const effectiveToolsMode = payload.tools_mode ?? "allowlist";
+    const normalizedPolicy = (payload.tools_profile != null
+      || (payload.allowed_tools?.length ?? 0) > 0
+      || (payload.denied_tools?.length ?? 0) > 0
+      || payload.tools_mode != null)
+      ? getLoadedTopLevelToolPolicy(payload)
+      : normalizeToolPolicy(DEFAULT_TOOL_POLICY, availableSkillIds);
     return {
       ...payload,
       sandbox_mode: payload.sandbox_mode ?? "off",
-      tools_mode: effectiveToolsMode,
-      allowed_tools: effectiveToolsMode === "allowlist"
-        ? (payload.allowed_tools ?? ["filesystem", "terminal", "browser"])
-        : payload.allowed_tools,
-      denied_tools: effectiveToolsMode === "denylist"
-        ? (payload.denied_tools ?? [])
-        : null,
+      tools_mode: payload.tools_mode ?? null,
+      tools_profile: normalizedPolicy.profile,
+      allowed_tools: normalizedPolicy.allow,
+      denied_tools: normalizedPolicy.deny,
       heartbeat_mode: payload.heartbeat_mode ?? "1h",
       idle_timeout_ms: (payload.heartbeat_mode ?? "1h") === "idle"
         ? payload.idle_timeout_ms
@@ -524,10 +778,79 @@ function App() {
     };
   }
 
+  function hasExplicitAgentToolPolicy(agent: any) {
+    return Boolean(
+      agent?.tools
+      || agent?.tools_profile != null
+      || (agent?.allowed_tools?.length ?? 0) > 0
+      || (agent?.denied_tools?.length ?? 0) > 0,
+    );
+  }
+
+  function getLoadedTopLevelToolPolicy(config: any) {
+    return normalizeToolPolicy(
+      config.tools_profile
+        ? {
+            profile: config.tools_profile,
+            allow: config.allowed_tools,
+            deny: config.denied_tools,
+          }
+        : deriveToolPolicyFromLegacy(
+            config.tools_mode,
+            config.allowed_tools,
+            config.denied_tools,
+            availableSkillIds,
+          ),
+      availableSkillIds,
+    );
+  }
+
+  function getLoadedAgentToolPolicy(agent: any) {
+    if (!hasExplicitAgentToolPolicy(agent)) {
+      return createInheritedToolPolicy();
+    }
+
+    return normalizeToolPolicy({
+      profile: agent.tools_profile ?? agent.tools?.profile ?? null,
+      allow: agent.allowed_tools ?? agent.tools?.allow ?? [],
+      deny: agent.denied_tools ?? agent.tools?.deny ?? [],
+      elevatedEnabled: agent.tools?.elevated?.enabled ?? false,
+      inherit: false,
+    }, availableSkillIds);
+  }
+
+  function buildAgentToolsPayload(policy: ToolPolicy, inheritedPolicy: ToolPolicy = toolPolicy) {
+    const normalizedPolicy = normalizeToolPolicy(policy, availableSkillIds);
+    if (normalizedPolicy.inherit) {
+      return null;
+    }
+
+    const materializedPolicy = materializeToolPolicy(normalizedPolicy, inheritedPolicy);
+    return {
+      profile: materializedPolicy.profile,
+      allow: materializedPolicy.allow,
+      deny: materializedPolicy.deny,
+      elevated: { enabled: materializedPolicy.elevatedEnabled ?? false },
+    };
+  }
+
   // Helper to transform the loaded config (from get_current_config)
   // into the structure expected by configure_agent, for comparison.
   function transformInitialToPayload(initial: any) {
     if (!initial) return null;
+    const normalizedProvider = getBaseProvider(initial.provider);
+    const initialProviderAuths = normalizeProviderAuths(
+      initial.provider_auths,
+      normalizedProvider,
+      initial.api_key || "",
+      initial.auth_method || "token",
+    );
+    const normalizedTopLevelSelection = normalizeSkillAndToolSelection(
+      initial.skills || [],
+      initial.allowed_tools || [],
+      availableSkillIds,
+    );
+    const normalizedTopLevelToolPolicy = getLoadedTopLevelToolPolicy(initial);
     const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${initial.agent_name}
 - **Emoji:** ${initial.agent_emoji || "🦞"}
@@ -537,10 +860,10 @@ Managed by Clawnetes.`;
     const mappedSandboxMode = initial.sandbox_mode === "full" ? "all" : (initial.sandbox_mode === "partial" ? "non-main" : (initial.sandbox_mode === "none" ? "off" : initial.sandbox_mode));
 
     return {
-      provider: initial.provider,
-      api_key: initial.api_key,
-      auth_method: initial.auth_method,
-      model: initial.model,
+      provider: normalizedProvider,
+      api_key: initialProviderAuths[normalizedProvider]?.token || initial.api_key,
+      auth_method: initialProviderAuths[normalizedProvider]?.auth_method || initial.auth_method,
+      model: applyModelProviderAuth(initial.model, initialProviderAuths),
       user_name: initial.user_name,
       agent_name: initial.agent_name,
       agent_vibe: initial.agent_vibe || "",
@@ -550,35 +873,52 @@ Managed by Clawnetes.`;
       gateway_auth_mode: initial.gateway_auth_mode,
       tailscale_mode: initial.tailscale_mode,
       node_manager: initial.node_manager,
-      skills: initial.skills || [],
+      skills: normalizedTopLevelSelection.skills,
       service_keys: initial.service_keys || {},
+      provider_auths: initialProviderAuths,
       sandbox_mode: mappedSandboxMode,
-      tools_mode: initial.tools_mode,
-      allowed_tools: initial.tools_mode === "allowlist" ? (initial.allowed_tools || []) : null,
-      denied_tools: initial.tools_mode === "denylist" ? (initial.denied_tools || []) : null,
-      fallback_models: (initial.fallback_models && initial.fallback_models.length > 0) ? initial.fallback_models : null,
+      tools_mode: initial.tools_mode ?? null,
+      tools_profile: normalizedTopLevelToolPolicy.profile,
+      allowed_tools: normalizedTopLevelToolPolicy.allow,
+      denied_tools: normalizedTopLevelToolPolicy.deny,
+      fallback_models: (initial.fallback_models && initial.fallback_models.length > 0)
+        ? initial.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
+        : null,
       heartbeat_mode: initial.heartbeat_mode,
       idle_timeout_ms: initial.heartbeat_mode === "idle" ? initial.idle_timeout_ms : null,
       identity_md: initial.identity_md || defaultIdentity,
       user_md: initial.user_md || null,
       soul_md: initial.soul_md || null,
-      agents: initial.enable_multi_agent && initial.agent_configs ? initial.agent_configs.map((a: any) => ({
-        id: a.id,
-        name: a.name,
-        model: a.model,
-        fallback_models: (a.fallback_models && a.fallback_models.length > 0) ? a.fallback_models : null,
-        skills: (a.skills && a.skills.length > 0) ? a.skills : null,
-        vibe: a.vibe || "",
-        identity_md: a.identity_md || `# IDENTITY.md - Who Am I?
+      agents: initial.enable_multi_agent && initial.agent_configs ? initial.agent_configs.map((a: any) => {
+        const normalizedAgentSelection = normalizeSkillAndToolSelection(
+          a.skills || [],
+          a.tools?.allow || a.allowed_tools || [],
+          availableSkillIds,
+        );
+        const normalizedAgentToolPolicy = getLoadedAgentToolPolicy(a);
+        const agentToolsPayload = buildAgentToolsPayload(normalizedAgentToolPolicy, normalizedTopLevelToolPolicy);
+
+        return {
+          id: a.id,
+          name: a.name,
+          model: applyModelProviderAuth(a.model, initialProviderAuths),
+          fallback_models: (a.fallback_models && a.fallback_models.length > 0)
+            ? a.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
+            : null,
+          skills: normalizedAgentSelection.skills.length > 0 ? normalizedAgentSelection.skills : null,
+          vibe: a.vibe || "",
+          identity_md: a.identity_md || `# IDENTITY.md - Who Am I?
 - **Name:** ${a.name}
 - **Emoji:** ${a.emoji || "🦞"}
 ---
 Managed by Clawnetes.`,
-        user_md: a.user_md || null,
-        soul_md: a.soul_md || null,
-        tools_md: a.tools_md || null,
-        agents_md: a.agents_md || null,
-      })) : null,
+          user_md: a.user_md || null,
+          soul_md: a.soul_md || null,
+          tools_md: a.tools_md || null,
+          agents_md: a.agents_md || null,
+          tools: agentToolsPayload,
+        };
+      }) : null,
       preserve_state: isPaired,
       agent_type: initial.agent_type || "custom",
       tools_md: initial.tools_md || null,
@@ -596,22 +936,24 @@ Managed by Clawnetes.`,
     };
   }
 
-  function constructConfigPayload() {
+  function constructConfigPayload(providerAuthsOverride?: Record<string, ProviderAuthConfig>) {
     const mappedSandboxMode = sandboxMode === "full" ? "all" : (sandboxMode === "partial" ? "non-main" : "off");
     const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${agentName}
 - **Emoji:** ${agentEmoji}
 ---
 Managed by Clawnetes.`;
+    const effectiveProviderAuths = providerAuthsOverride || providerAuths;
 
     // For preset agents, always include preset-configured fields
     const usePresetFields = isPresetAgent || mode === "advanced";
+    const normalizedTopLevelToolPolicy = normalizeToolPolicy(toolPolicy, availableSkillIds);
 
     return {
       provider,
-      api_key: apiKey,
-      auth_method: authMethod,
-      model,
+      api_key: effectiveProviderAuths[provider]?.token || apiKey,
+      auth_method: effectiveProviderAuths[provider]?.auth_method || authMethod,
+      model: applyModelProviderAuth(model, effectiveProviderAuths),
       user_name: userName,
       agent_name: agentName,
       agent_vibe: "",
@@ -623,33 +965,52 @@ Managed by Clawnetes.`;
       node_manager: nodeManager,
       skills: selectedSkills,
       service_keys: serviceKeys,
+      provider_auths: effectiveProviderAuths,
       sandbox_mode: usePresetFields ? mappedSandboxMode : null,
-      tools_mode: usePresetFields ? toolsMode : null,
-      allowed_tools: usePresetFields && toolsMode === "allowlist" ? allowedTools : null,
-      denied_tools: usePresetFields && toolsMode === "denylist" ? deniedTools : null,
-      fallback_models: usePresetFields && enableFallbacks ? fallbackModels.filter(m => m) : null,
+      tools_mode: usePresetFields
+        ? (normalizedTopLevelToolPolicy.profile === "full" && normalizedTopLevelToolPolicy.allow.length === 0 && normalizedTopLevelToolPolicy.deny.length === 0 ? "all" : "allowlist")
+        : "all",
+      tools_profile: usePresetFields ? normalizedTopLevelToolPolicy.profile : null,
+      allowed_tools: usePresetFields ? normalizedTopLevelToolPolicy.allow : null,
+      denied_tools: usePresetFields ? normalizedTopLevelToolPolicy.deny : null,
+      fallback_models: usePresetFields && enableFallbacks
+        ? fallbackModels.filter(m => m).map(m => applyModelProviderAuth(m, effectiveProviderAuths))
+        : null,
       heartbeat_mode: usePresetFields ? heartbeatMode : null,
       idle_timeout_ms: usePresetFields && heartbeatMode === "idle" ? idleTimeoutMs : null,
       identity_md: (usePresetFields && identityMd) ? identityMd : defaultIdentity,
       user_md: usePresetFields && userMd ? userMd : null,
       soul_md: usePresetFields && soulMd ? soulMd : null,
-      agents: enableMultiAgent ? agentConfigs.map(a => ({
-        id: a.id,
-        name: a.name,
-        model: a.model,
-        fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
-        skills: a.skills.length > 0 ? a.skills : null,
-        vibe: a.vibe,
-        identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
+      agents: enableMultiAgent ? agentConfigs.map(a => {
+        const normalizedAgentSelection = normalizeSkillAndToolSelection(
+          a.skills,
+          a.toolPolicy.allow,
+          availableSkillIds,
+        );
+        const normalizedAgentToolPolicy = normalizeToolPolicy(a.toolPolicy, availableSkillIds);
+        const agentToolsPayload = buildAgentToolsPayload(normalizedAgentToolPolicy, normalizedTopLevelToolPolicy);
+
+        return {
+          id: a.id,
+          name: a.name,
+          model: applyModelProviderAuth(a.model, effectiveProviderAuths),
+          fallback_models: a.fallbackModels.length > 0
+            ? a.fallbackModels.map(m => applyModelProviderAuth(m, effectiveProviderAuths))
+            : null,
+          skills: normalizedAgentSelection.skills.length > 0 ? normalizedAgentSelection.skills : null,
+          vibe: a.vibe,
+          identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
 - **Name:** ${a.name}
 - **Emoji:** ${a.emoji || "🦞"}
 ---
 Managed by Clawnetes.`,
-        user_md: a.userMd || null,
-        soul_md: a.soulMd || null,
-        tools_md: a.toolsMd || null,
-        agents_md: a.agentsMd || null,
-      })) : null,
+          user_md: a.userMd || null,
+          soul_md: a.soulMd || null,
+          tools_md: a.toolsMd || null,
+          agents_md: a.agentsMd || null,
+          tools: agentToolsPayload,
+        };
+      }) : null,
       preserve_state: isPaired,
       // New preset fields
       agent_type: agentType,
@@ -699,6 +1060,7 @@ Managed by Clawnetes.`,
     }
 
     const configPayload = constructConfigPayload();
+    const agentSessionIds = getAgentSessionInitIds(configPayload.agents);
     // Ensure we preserve state if we found it was paired
     configPayload.preserve_state = actualIsPaired;
 
@@ -832,6 +1194,16 @@ Managed by Clawnetes.`,
           await invoke("start_gateway");
         }
 
+        if (targetEnvironment !== "cloud" && agentSessionIds.length > 0) {
+          setProgress("Initializing agent sessions...");
+          setLogs("Initializing agent sessions...");
+          try {
+            await invoke("initialize_agent_sessions", { agentIds: agentSessionIds });
+          } catch (e) {
+            console.warn("Agent session init failed (non-fatal):", e);
+          }
+        }
+
         setProgress("Finalizing setup...");
         if (!actualIsPaired) {
           const instruction: string = await invoke("generate_pairing_code");
@@ -941,12 +1313,20 @@ Managed by Clawnetes.`,
 
       const config: any = await invoke("get_current_config", { remote: remoteConfig });
       initialConfigRef.current = config;
+      const normalizedProvider = getBaseProvider(config.provider);
+      const normalizedProviderAuths = normalizeProviderAuths(
+        config.provider_auths,
+        normalizedProvider,
+        config.api_key || "",
+        config.auth_method || "token",
+      );
 
       // Populate state
-      setProvider(config.provider);
-      setApiKey(config.api_key);
-      setAuthMethod(config.auth_method);
-      setModel(config.model);
+      setProvider(normalizedProvider);
+      setApiKey(normalizedProviderAuths[normalizedProvider]?.token || config.api_key);
+      setAuthMethod(normalizedProviderAuths[normalizedProvider]?.auth_method || config.auth_method);
+      setProviderAuths(normalizedProviderAuths);
+      setModel(normalizeModelRefForUi(config.model, normalizedProviderAuths));
       setUserName(config.user_name);
       setAgentName(config.agent_name);
       setAgentEmoji(config.agent_emoji || "🦞");
@@ -959,16 +1339,20 @@ Managed by Clawnetes.`,
       setTailscaleMode(config.tailscale_mode);
       setNodeManager(config.node_manager);
 
-      setSelectedSkills(config.skills);
+      const normalizedTopLevelSelection = normalizeSkillAndToolSelection(
+        config.skills,
+        config.allowed_tools,
+        availableSkillIds,
+      );
+      const normalizedTopLevelToolPolicy = getLoadedTopLevelToolPolicy(config);
+      setSelectedSkills(normalizedTopLevelSelection.skills);
       // Service keys might be partial, merge them?
       setServiceKeys(config.service_keys);
 
       setSandboxMode(config.sandbox_mode);
-      setToolsMode(config.tools_mode);
-      setAllowedTools(config.allowed_tools);
-      setDeniedTools(config.denied_tools);
+      setToolPolicy(normalizedTopLevelToolPolicy);
 
-      setFallbackModels(config.fallback_models);
+      setFallbackModels(config.fallback_models.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)));
       setEnableFallbacks(config.fallback_models.length > 0);
 
       setHeartbeatMode(config.heartbeat_mode);
@@ -1008,22 +1392,31 @@ Managed by Clawnetes.`,
       setEnableMultiAgent(config.enable_multi_agent);
       if (config.enable_multi_agent && config.agent_configs) {
         setNumAgents(config.agent_configs.length);
-        setAgentConfigs(config.agent_configs.map((a: any) => ({
-          id: a.id,
-          name: a.name,
-          model: a.model,
-          fallbackModels: a.fallback_models || [],
-          skills: a.skills || [],
-          vibe: a.vibe,
-          emoji: a.emoji || "🦞",
-          identityMd: a.identity_md || "",
-          userMd: a.user_md || "",
-          soulMd: a.soul_md || "",
-          toolsMd: a.tools_md || "",
-          agentsMd: a.agents_md || "",
-          allowedTools: a.allowed_tools || [],
-          cronJobs: a.cron_jobs || [],
-        })));
+        setAgentConfigs(config.agent_configs.map((a: any) => {
+          const normalizedAgentSelection = normalizeSkillAndToolSelection(
+            a.skills,
+            a.tools?.allow || a.allowed_tools,
+            availableSkillIds,
+          );
+          const normalizedAgentToolPolicy = getLoadedAgentToolPolicy(a);
+
+          return {
+            id: a.id,
+            name: a.name,
+            model: normalizeModelRefForUi(a.model, normalizedProviderAuths),
+            fallbackModels: (a.fallback_models || []).map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)),
+            skills: normalizedAgentSelection.skills,
+            vibe: a.vibe,
+            emoji: a.emoji || "🦞",
+            identityMd: a.identity_md || "",
+            userMd: a.user_md || "",
+            soulMd: a.soul_md || "",
+            toolsMd: a.tools_md || "",
+            agentsMd: a.agents_md || "",
+            toolPolicy: normalizedAgentToolPolicy,
+            cronJobs: a.cron_jobs || [],
+          };
+        }));
       }
 
       if (config.is_paired !== undefined) {
@@ -1660,29 +2053,19 @@ Managed by Clawnetes.`,
             </div>
 
             <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>AI Provider API Key</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={`Enter your ${provider} API key`}
-                autoComplete="off"
-              />
-              <p className="input-hint" style={{ marginTop: "0.25rem", fontSize: "0.8rem" }}>
-                Required for {provider}. Get one from the provider's dashboard.
-              </p>
+              {renderProviderAuthEditor(provider)}
             </div>
 
             {/* Show auth keys for skills that require them */}
             {selectedSkills.filter(s => {
               const skill = availableSkills.find(sk => sk.id === s);
-              return skill?.requiresAuth;
+              return skill?.requiresAuth && skill.authMode !== "oauth";
             }).length > 0 && (
                 <div className="form-group" style={{ marginTop: "1rem" }}>
                   <label>Skill API Keys (Optional)</label>
                   {selectedSkills.filter(s => {
                     const skill = availableSkills.find(sk => sk.id === s);
-                    return skill?.requiresAuth;
+                    return skill?.requiresAuth && skill.authMode !== "oauth";
                   }).map(s => {
                     const skill = availableSkills.find(sk => sk.id === s)!;
                     return (
@@ -1701,8 +2084,28 @@ Managed by Clawnetes.`,
                 </div>
               )}
 
+            {selectedSkills.filter(s => {
+              const skill = availableSkills.find(sk => sk.id === s);
+              return skill?.authMode === "oauth";
+            }).length > 0 && (
+              <div className="form-group" style={{ marginTop: "1rem" }}>
+                <label>Skill OAuth (Deferred)</label>
+                {selectedSkills.filter(s => {
+                  const skill = availableSkills.find(sk => sk.id === s);
+                  return skill?.authMode === "oauth";
+                }).map(s => {
+                  const skill = availableSkills.find(sk => sk.id === s)!;
+                  return (
+                    <div key={s} style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                      {skill.name}: an OpenClaw terminal auth step will run at the end of setup.
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" disabled={!apiKey} onClick={() => setStep(9)}>Next</button>
+              <button className="primary" disabled={!LOCAL_PROVIDERS.has(provider) && !isOAuthMethod(getProviderAuth(provider).auth_method) && !getProviderAuth(provider).token} onClick={() => setStep(9)}>Next</button>
               <button className="secondary" onClick={() => setStep(6.5)}>Back</button>
             </div>
           </div>
@@ -1770,17 +2173,17 @@ Managed by Clawnetes.`,
                 value={provider}
                 onChange={(p) => {
                   setProvider(p);
-                  if (DEFAULT_MODELS[p]) {
-                    setModel(DEFAULT_MODELS[p]);
-                  } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
-                    setModel(MODELS_BY_PROVIDER[p][0].value);
+                  const defaultModel = getProviderDefaultModel(p);
+                  if (defaultModel) {
+                    setModel(defaultModel);
+                  } else if (getProviderModelOptions(p).length > 0) {
+                    setModel(getProviderModelOptions(p)[0].value);
                   }
                 }}
                 options={[
                   { value: "anthropic", label: "Anthropic", icon: PROVIDER_LOGOS["anthropic"] },
                   { value: "openai", label: "OpenAI", icon: PROVIDER_LOGOS["openai"] },
                   { value: "google", label: "Google Gemini", icon: PROVIDER_LOGOS["google"] },
-                  { value: "google-vertex", label: "Google Vertex AI", icon: PROVIDER_LOGOS["google-vertex"] },
                   { value: "openrouter", label: "OpenRouter", icon: PROVIDER_LOGOS["openrouter"] },
                   { value: "xai", label: "xAI (Grok)", icon: PROVIDER_LOGOS["xai"] },
                   { value: "ollama", label: "Ollama (Local)", icon: PROVIDER_LOGOS["ollama"] },
@@ -1790,28 +2193,7 @@ Managed by Clawnetes.`,
               />
             </div>
 
-            <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>Auth Method</label>
-              <Dropdown
-                value={authMethod}
-                onChange={setAuthMethod}
-                options={[
-                  ...(provider === "anthropic" ? [
-                    { value: "token", label: "Anthropic API Key", description: "Standard API Key starting with sk-ant-..." },
-                    { value: "setup-token", label: "Anthropic Token (from setup-token)", description: "Temporary token from CLI setup" }
-                  ] : []),
-                  ...(provider === "google" ? [
-                    { value: "token", label: "Google Gemini API Key", description: "Standard API Key" }
-                  ] : []),
-                  ...(provider === "openai" ? [
-                    { value: "token", label: "OpenAI API Key", description: "Standard API Key starting with sk-..." }
-                  ] : []),
-                  ...(!["anthropic", "google", "openai"].includes(provider) ? [
-                    { value: "token", label: "API Key (Standard)", description: "Standard API Key for this provider" }
-                  ] : [])
-                ]}
-              />
-            </div>
+            {renderProviderAuthEditor(provider, { keyPrefix: "primary-provider", showProviderLabel: false, marginTop: "1.5rem" })}
 
             {/* LM Studio base URL input */}
             {provider === "lmstudio" && (
@@ -1959,7 +2341,7 @@ Managed by Clawnetes.`,
                       : provider === "local" && localModels.length > 0
                         ? localModels.map(m => ({ value: `local/${m}`, label: m }))
                         : MODELS_BY_PROVIDER[provider]
-                          ? MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))
+                          ? getProviderModelOptions(provider)
                           : [{ value: model, label: model }]
                 }
               />
@@ -1997,24 +2379,6 @@ Managed by Clawnetes.`,
                 <p className="input-hint">Extended thinking improves reasoning on complex tasks. Available for Claude 4.x models.</p>
               </div>
             )}
-
-            {!["ollama", "lmstudio", "local"].includes(provider) && (
-              <div className="form-group" style={{ marginTop: "1.5rem" }}>
-                <label>{authMethod === "setup-token" ? "Anthropic Setup Token" : "API Key"}</label>
-                <input
-                  type="password"
-                  placeholder="Paste here..."
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-                {authMethod === "setup-token" && (
-                  <p className="input-hint">
-                    Run <code>claude setup-token</code> in your terminal and paste the result here.
-                  </p>
-                )}
-              </div>
-            )}
-
 
             {["ollama", "lmstudio", "local"].includes(provider) && (
               <p className="input-hint" style={{ marginBottom: "1rem", textAlign: "center", color: "var(--success)" }}>
@@ -2189,14 +2553,23 @@ Managed by Clawnetes.`,
 
                     {skill.requiresAuth && selectedSkills.includes(skill.id) && (
                       <div className="skill-auth" style={{ marginTop: "auto", paddingTop: "0.5rem" }}>
-                        <input
-                          type="password"
-                          placeholder={skill.authPlaceholder || "API Key"}
-                          value={serviceKeys[skill.id] || ""}
-                          onChange={(e) => setServiceKeys({ ...serviceKeys, [skill.id]: e.target.value })}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ width: "100%", fontSize: "0.8rem", padding: "0.5rem", borderRadius: "8px" }}
-                        />
+                        {skill.authMode === "oauth" ? (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: "100%", fontSize: "0.8rem", padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", color: "var(--text-muted)" }}
+                          >
+                            Browser authentication will run at the end of setup.
+                          </div>
+                        ) : (
+                          <input
+                            type="password"
+                            placeholder={skill.authPlaceholder || "API Key"}
+                            value={serviceKeys[skill.id] || ""}
+                            onChange={(e) => setServiceKeys({ ...serviceKeys, [skill.id]: e.target.value })}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: "100%", fontSize: "0.8rem", padding: "0.5rem", borderRadius: "8px" }}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
@@ -2265,78 +2638,14 @@ Managed by Clawnetes.`,
       case 11.1:
         return (
           <div className="step-view">
-            <h2>Allowed Tools</h2>
-            <p className="step-description">Configure which tools your agent is allowed to use.</p>
+            <h2>Tool Access</h2>
+            <p className="step-description">Configure the base tool profile and individual tool access.</p>
 
-            <div className="form-group">
-              <label>Tools Policy</label>
-              <Dropdown
-                value={toolsMode}
-                onChange={setToolsMode}
-                options={[
-                  { value: "allowlist", label: "Allowlist (Recommended)", description: "Only enable explicitly selected tools." },
-                  { value: "denylist", label: "Denylist", description: "Block specific tools." },
-                  { value: "all", label: "All Tools", description: "Enable all available tools." }
-                ]}
-              />
-            </div>
-
-            {toolsMode === "allowlist" && (
-              <div className="form-group" style={{ marginTop: "1rem" }}>
-                <label>Core Tools</label>
-                <div className="skills-grid">
-                  {[
-                    { id: "filesystem", name: "File System" },
-                    { id: "terminal", name: "Terminal" },
-                    { id: "browser", name: "Browser" },
-                    { id: "network", name: "Network" }
-                  ].map(tool => (
-                    <div
-                      key={tool.id}
-                      className={`skill-card ${allowedTools.includes(tool.id) ? "active" : ""}`}
-                      onClick={() => {
-                        setAllowedTools(prev =>
-                          prev.includes(tool.id)
-                            ? prev.filter(t => t !== tool.id)
-                            : [...prev, tool.id]
-                        );
-                      }}
-                    >
-                      <div className="skill-name">{tool.name}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <label style={{ marginTop: "1rem" }}>Skills as Tools</label>
-                <div className="skills-grid" style={{ maxHeight: "300px", overflowY: "auto" }}>
-                  {availableSkills.map(skill => (
-                    <div
-                      key={skill.id}
-                      className={`skill-card ${allowedTools.includes(skill.id) ? "active" : ""}`}
-                      onClick={() => {
-                        setAllowedTools(prev =>
-                          prev.includes(skill.id)
-                            ? prev.filter(t => t !== skill.id)
-                            : [...prev, skill.id]
-                        );
-                      }}
-                      style={{ padding: "0.75rem" }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center" }}>
-                        {SKILL_ICONS[skill.id] && (
-                          <img
-                            src={SKILL_ICONS[skill.id]}
-                            alt=""
-                            style={{ width: "16px", height: "16px", objectFit: "contain", borderRadius: "3px", backgroundColor: "white", padding: "1px", marginRight: "6px" }}
-                          />
-                        )}
-                        <div className="skill-name" style={{ fontSize: "0.85rem" }}>{skill.name}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <ToolPolicyEditor
+              policy={toolPolicy}
+              onChange={setToolPolicy}
+              description="Profiles set the default OpenClaw allowlist. Individual toggles override that baseline."
+            />
 
             <div className="button-group">
               <button className="primary" onClick={() => setStep(15)}>Next</button>
@@ -2430,45 +2739,12 @@ Managed by Clawnetes.`,
             </div>
 
             <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>Tools Policy</label>
-              <Dropdown
-                value={toolsMode}
-                onChange={setToolsMode}
-                options={[
-                  { value: "allowlist", label: "Allowlist (Recommended)", description: "Only enable explicitly selected tools." },
-                  { value: "denylist", label: "Denylist", description: "Block specific tools." },
-                  { value: "all", label: "All Tools", description: "Enable all available tools." }
-                ]}
+              <ToolPolicyEditor
+                policy={toolPolicy}
+                onChange={setToolPolicy}
+                description="Use a profile as the base, then refine individual tools."
               />
             </div>
-
-            {toolsMode === "allowlist" && (
-              <div className="form-group">
-                <label>Allowed Tools</label>
-                <div className="skills-grid">
-                  {[
-                    { id: "filesystem", name: "File System" },
-                    { id: "terminal", name: "Terminal" },
-                    { id: "browser", name: "Browser" },
-                    { id: "network", name: "Network" }
-                  ].map(tool => (
-                    <div
-                      key={tool.id}
-                      className={`skill-card ${allowedTools.includes(tool.id) ? "active" : ""}`}
-                      onClick={() => {
-                        setAllowedTools(prev =>
-                          prev.includes(tool.id)
-                            ? prev.filter(t => t !== tool.id)
-                            : [...prev, tool.id]
-                        );
-                      }}
-                    >
-                      <div className="skill-name">{tool.name}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             <div className="button-group">
               <button className="primary" onClick={() => setStep(13)}>Continue</button>
@@ -2476,7 +2752,11 @@ Managed by Clawnetes.`,
             </div>
           </div>
         );
-      case 13:
+      case 13: {
+        const referencedProviders = buildReferencedProviders({
+          primaryModel: model,
+          fallbackModels: enableFallbacks ? fallbackModels.filter(Boolean) : [],
+        });
         return (
           <div className="step-view">
             <h2>Model Configuration</h2>
@@ -2491,10 +2771,11 @@ Managed by Clawnetes.`,
                 value={provider}
                 onChange={(p) => {
                   setProvider(p);
-                  if (DEFAULT_MODELS[p]) {
-                    setModel(DEFAULT_MODELS[p]);
-                  } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
-                    setModel(MODELS_BY_PROVIDER[p][0].value);
+                  const defaultModel = getProviderDefaultModel(p);
+                  if (defaultModel) {
+                    setModel(defaultModel);
+                  } else if (getProviderModelOptions(p).length > 0) {
+                    setModel(getProviderModelOptions(p)[0].value);
                   }
                 }}
                 options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
@@ -2511,7 +2792,7 @@ Managed by Clawnetes.`,
                     value={model}
                     onChange={setModel}
                     searchable={MODELS_BY_PROVIDER[provider].length > 10}
-                    options={MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))}
+                    options={getProviderModelOptions(provider)}
                   />
                 </div>
               )}
@@ -2545,8 +2826,7 @@ Managed by Clawnetes.`,
               <>
                 {[0, 1].map(idx => {
                   const currentModel = fallbackModels[idx] || "";
-                  const currentProvider = currentModel.split('/')[0];
-                  const needsAuth = currentProvider && currentProvider !== provider && !serviceKeys[currentProvider];
+                  const currentProvider = getBaseProviderFromModel(currentModel);
 
                   return (
                     <div key={idx} className="form-group" style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px" }}>
@@ -2559,10 +2839,11 @@ Managed by Clawnetes.`,
                         onChange={(newProv) => {
                           if (!newProv) return;
                           const newModels = [...fallbackModels];
-                          if (DEFAULT_MODELS[newProv]) {
-                            newModels[idx] = DEFAULT_MODELS[newProv];
-                          } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                            newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
+                          const defaultModel = getProviderDefaultModel(newProv);
+                          if (defaultModel) {
+                            newModels[idx] = defaultModel;
+                          } else if (getProviderModelOptions(newProv).length > 0) {
+                            newModels[idx] = getProviderModelOptions(newProv)[0].value;
                           }
                           setFallbackModels(newModels);
                         }}
@@ -2714,7 +2995,7 @@ Managed by Clawnetes.`,
                                   ? lmstudioModels.map(m => ({ value: m, label: m }))
                                   : currentProvider === "local" && localModels.length > 0
                                     ? localModels.map(m => ({ value: `local/\${m}`, label: m }))
-                                    : MODELS_BY_PROVIDER[currentProvider].map(m => ({ value: m.value, label: m.label, description: m.description }))
+                                    : getProviderModelOptions(currentProvider)
                             }
                           />
                         </div>
@@ -2734,23 +3015,18 @@ Managed by Clawnetes.`,
                         </div>
                       )}
 
-                      {/* Auth Selection */}
-                      {currentModel && currentProvider && currentProvider !== provider && !["ollama", "lmstudio", "local"].includes(currentProvider) && (
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>API Key for {currentProvider}</label>
-                          <input
-                            type="password"
-                            placeholder={`API Key for ${currentProvider}`}
-                            value={serviceKeys[currentProvider] || ""}
-                            onChange={(e) => setServiceKeys({ ...serviceKeys, [currentProvider]: e.target.value })}
-                            autoComplete="off"
-                          />
-                        </div>
-                      )}
                     </div>
                   );
                 })}
               </>
+            )}
+
+            {referencedProviders.length > 0 && (
+              <div style={{ marginTop: "1.5rem" }}>
+                <h3 style={{ marginBottom: "0.5rem" }}>Provider Authentication</h3>
+                <p className="step-description">Configure auth once for every remote provider referenced by the primary or fallback models.</p>
+                {referencedProviders.map(targetProvider => renderProviderAuthEditor(targetProvider))}
+              </div>
             )}
 
             <div className="button-group">
@@ -2759,6 +3035,7 @@ Managed by Clawnetes.`,
             </div>
           </div>
         );
+      }
       case 14:
         return (
           <div className="step-view">
@@ -2913,7 +3190,7 @@ Managed by Clawnetes.`,
                         soulMd: sub.soulMd,
                         toolsMd: sub.toolsMd || "",
                         agentsMd: sub.agentsMd || "",
-                        allowedTools: [],
+                        toolPolicy: normalizeToolPolicy(sub.toolPolicy),
                         cronJobs: [],
                       });
                     }
@@ -2948,7 +3225,7 @@ Managed by Clawnetes.`,
                         soulMd: "",
                         toolsMd: "",
                         agentsMd: "",
-                        allowedTools: [],
+                        toolPolicy: createInheritedToolPolicy(),
                         cronJobs: [],
                       });
                     }
@@ -2983,15 +3260,11 @@ Managed by Clawnetes.`,
           return null;
         }
         const currentAgent = agentConfigs[currentAgentConfigIdx];
-        const currentAgentProvider = currentAgent.model.split('/')[0];
-
-        // Core tools for allowed tools selection
-        const coreTools = [
-          { id: "filesystem", name: "File System" },
-          { id: "terminal", name: "Terminal" },
-          { id: "browser", name: "Browser" },
-          { id: "network", name: "Network" }
-        ];
+        const currentAgentProvider = getBaseProviderFromModel(currentAgent.model);
+        const currentAgentReferencedProviders = buildReferencedProviders({
+          primaryModel: currentAgent.model,
+          fallbackModels: currentAgent.fallbackModels || [],
+        });
 
         return (
           <div className="step-view">
@@ -3164,10 +3437,11 @@ Managed by Clawnetes.`,
                 value={currentAgentProvider}
                 onChange={(newProv) => {
                   const updated = [...agentConfigs];
-                  if (DEFAULT_MODELS[newProv]) {
-                    updated[currentAgentConfigIdx].model = DEFAULT_MODELS[newProv];
-                  } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                    updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
+                  const defaultModel = getProviderDefaultModel(newProv);
+                  if (defaultModel) {
+                    updated[currentAgentConfigIdx].model = defaultModel;
+                  } else if (getProviderModelOptions(newProv).length > 0) {
+                    updated[currentAgentConfigIdx].model = getProviderModelOptions(newProv)[0].value;
                   }
                   setAgentConfigs(updated);
                 }}
@@ -3189,7 +3463,7 @@ Managed by Clawnetes.`,
                       setAgentConfigs(updated);
                     }}
                     searchable={MODELS_BY_PROVIDER[currentAgentProvider].length > 10}
-                    options={MODELS_BY_PROVIDER[currentAgentProvider].map(m => ({ value: m.value, label: m.label }))}
+                    options={getProviderModelOptions(currentAgentProvider)}
                   />
                 </div>
               )}
@@ -3204,18 +3478,6 @@ Managed by Clawnetes.`,
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
                   <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setLocalBaseUrl(e.target.value)} />
-                </div>
-              )}
-              {currentAgentProvider && currentAgentProvider !== provider && !serviceKeys[currentAgentProvider] && !["ollama", "lmstudio", "local"].includes(currentAgentProvider) && (
-                <div style={{ marginTop: "0.5rem" }}>
-                  <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>API Key for {currentAgentProvider}</label>
-                  <input
-                    type="password"
-                    placeholder={`API Key for ${currentAgentProvider}`}
-                    value={serviceKeys[currentAgentProvider] || ""}
-                    onChange={(e) => setServiceKeys({ ...serviceKeys, [currentAgentProvider]: e.target.value })}
-                    autoComplete="off"
-                  />
                 </div>
               )}
             </div>
@@ -3234,7 +3496,7 @@ Managed by Clawnetes.`,
 
               {(() => {
                 const currentFallbackModel = currentAgent.fallbackModels[0] || "";
-                const currentFallbackProvider = currentFallbackModel.split('/')[0];
+                const currentFallbackProvider = getBaseProviderFromModel(currentFallbackModel);
 
                 return (
                   <>
@@ -3244,10 +3506,11 @@ Managed by Clawnetes.`,
                       onChange={(newProv) => {
                         if (!newProv) return;
                         const updated = [...agentConfigs];
-                        if (DEFAULT_MODELS[newProv]) {
-                          updated[currentAgentConfigIdx].fallbackModels = [DEFAULT_MODELS[newProv]];
-                        } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                          updated[currentAgentConfigIdx].fallbackModels = [MODELS_BY_PROVIDER[newProv][0].value];
+                        const defaultModel = getProviderDefaultModel(newProv);
+                        if (defaultModel) {
+                          updated[currentAgentConfigIdx].fallbackModels = [defaultModel];
+                        } else if (getProviderModelOptions(newProv).length > 0) {
+                          updated[currentAgentConfigIdx].fallbackModels = [getProviderModelOptions(newProv)[0].value];
                         }
                         setAgentConfigs(updated);
                       }}
@@ -3269,7 +3532,7 @@ Managed by Clawnetes.`,
                             setAgentConfigs(updated);
                           }}
                           searchable={MODELS_BY_PROVIDER[currentFallbackProvider].length > 10}
-                          options={MODELS_BY_PROVIDER[currentFallbackProvider].map(m => ({ value: m.value, label: m.label }))}
+                          options={getProviderModelOptions(currentFallbackProvider)}
                         />
                       </div>
                     )}
@@ -3286,22 +3549,18 @@ Managed by Clawnetes.`,
                         <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setLocalBaseUrl(e.target.value)} />
                       </div>
                     )}
-                    {currentFallbackProvider && currentFallbackProvider !== provider && currentFallbackProvider !== currentAgentProvider && !serviceKeys[currentFallbackProvider] && !["ollama", "lmstudio", "local"].includes(currentFallbackProvider) && (
-                      <div style={{ marginTop: "0.5rem" }}>
-                        <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>API Key for {currentFallbackProvider}</label>
-                        <input
-                          type="password"
-                          placeholder={`API Key for ${currentFallbackProvider}`}
-                          value={serviceKeys[currentFallbackProvider] || ""}
-                          onChange={(e) => setServiceKeys({ ...serviceKeys, [currentFallbackProvider]: e.target.value })}
-                          autoComplete="off"
-                        />
-                      </div>
-                    )}
                   </>
                 );
               })()}
             </div>
+
+            {currentAgentReferencedProviders.length > 0 && (
+              <div style={{ marginBottom: "1rem" }}>
+                <h3 style={{ marginBottom: "0.5rem" }}>Provider Authentication</h3>
+                <p className="step-description">Configure auth once for the remote providers used by this agent.</p>
+                {currentAgentReferencedProviders.map(targetProvider => renderProviderAuthEditor(targetProvider))}
+              </div>
+            )}
 
             <div className="form-group">
               <label>Skills</label>
@@ -3345,30 +3604,21 @@ Managed by Clawnetes.`,
               </div>
             </div>
 
-            {/* Allowed Tools */}
+            {/* Tool Access */}
             <div className="form-group" style={{ marginTop: "1rem" }}>
-              <label>Allowed Tools</label>
-              <div className="skills-grid" style={{ marginTop: "0.5rem" }}>
-                {[...coreTools, ...availableSkills.map(s => ({ id: s.id, name: s.name }))].map(tool => (
-                  <div
-                    key={`tool-${tool.id}`}
-                    className={`skill-card ${currentAgent.allowedTools.includes(tool.id) ? "active" : ""}`}
-                    onClick={() => {
-                      const updated = [...agentConfigs];
-                      const tools = updated[currentAgentConfigIdx].allowedTools;
-                      if (tools.includes(tool.id)) {
-                        updated[currentAgentConfigIdx].allowedTools = tools.filter(t => t !== tool.id);
-                      } else {
-                        updated[currentAgentConfigIdx].allowedTools = [...tools, tool.id];
-                      }
-                      setAgentConfigs(updated);
-                    }}
-                    style={{ padding: "0.5rem 0.75rem" }}
-                  >
-                    <div className="skill-name" style={{ fontSize: "0.85rem" }}>{tool.name}</div>
-                  </div>
-                ))}
-              </div>
+              <ToolPolicyEditor
+                policy={currentAgent.toolPolicy}
+                inheritedPolicy={toolPolicy}
+                onChange={(nextPolicy) => {
+                  const updated = [...agentConfigs];
+                  updated[currentAgentConfigIdx].toolPolicy = nextPolicy;
+                  setAgentConfigs(updated);
+                }}
+                title="Tool Access"
+                description="Per-agent overrides follow the same OpenClaw tool profile model."
+                showElevatedToggle
+                allowInherit
+              />
             </div>
 
             {/* Cron Jobs */}
@@ -3439,7 +3689,7 @@ Managed by Clawnetes.`,
                   soulMd: "",
                   toolsMd: "",
                   agentsMd: "",
-                  allowedTools: [],
+                  toolPolicy: createInheritedToolPolicy(),
                   cronJobs: [],
                 };
                 setAgentConfigs([...agentConfigs, newAgent]);
@@ -3507,7 +3757,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Gateway Settings</span>
-                <span style={{ transform: extraSettingsOpen.gateway ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.gateway ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.gateway && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3553,7 +3803,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Runtime Environment</span>
-                <span style={{ transform: extraSettingsOpen.runtime ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.runtime ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.runtime && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3582,7 +3832,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Security (Sandbox)</span>
-                <span style={{ transform: extraSettingsOpen.security ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.security ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.security && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3611,7 +3861,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Session Management</span>
-                <span style={{ transform: extraSettingsOpen.session ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.session ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.session && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3911,6 +4161,49 @@ Managed by Clawnetes.`,
                     Establish SSH Tunnel
                   </button>
                 )}
+              </div>
+            )}
+
+            {deferredOAuthQueue.length > 0 && (
+              <div style={{
+                padding: "1rem",
+                backgroundColor: "var(--bg-card)",
+                borderRadius: "8px",
+                marginBottom: "1.5rem",
+                border: "1px solid var(--border)"
+              }}>
+                <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Deferred OpenClaw Authentication</h3>
+                <p className="step-description" style={{ marginBottom: "0.75rem" }}>
+                  OpenClaw is installed. Clawnetes will open a terminal for each OAuth provider, replace any stale OpenClaw callback session on the known localhost port, and then sync the imported profile back into the app.
+                </p>
+                <div style={{ display: "grid", gap: "0.5rem" }}>
+                  {deferredOAuthQueue.map(item => {
+                    const result = oauthCompletionResults[item.id];
+                    const status = result?.status || (oauthCompletionRunning ? "pending" : "pending");
+                    const color = status === "success" ? "var(--success)" : status === "error" ? "var(--danger, #dc2626)" : "var(--text-muted)";
+                    return (
+                      <div key={item.id} style={{ padding: "0.75rem", border: "1px solid var(--border)", borderRadius: "8px" }}>
+                        <div style={{ fontWeight: 600 }}>{item.label}</div>
+                        <div style={{ fontSize: "0.85rem", color }}>
+                          {result?.message || (oauthCompletionRunning ? "Waiting for terminal authentication..." : "Pending terminal authentication")}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  className="secondary"
+                  style={{ width: "100%", marginTop: "1rem" }}
+                  disabled={oauthCompletionRunning}
+                  onClick={() => {
+                    runDeferredOAuthQueue().catch((e) => {
+                      console.error("Deferred OAuth retry failed:", e);
+                      setOauthCompletionRunning(false);
+                    });
+                  }}
+                >
+                  {oauthCompletionRunning ? "Running OpenClaw Authentication..." : "Retry Deferred OAuth"}
+                </button>
               </div>
             )}
 
