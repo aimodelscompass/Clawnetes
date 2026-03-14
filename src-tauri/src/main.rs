@@ -1,3 +1,8 @@
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
 use tauri::command;
 // Updated: Force rebuild trigger
 use rand::Rng;
@@ -19,6 +24,252 @@ extern crate lazy_static;
 
 lazy_static! {
     static ref TUNNEL_RUNNING: AtomicBool = AtomicBool::new(false);
+}
+
+const ADVANCED_LICENSE_PRODUCT_ID: &str = "gsFyrV978DfW2ZYp5pzetQ==";
+const ADVANCED_LICENSE_STORAGE_FILE: &str = "advanced-license.json";
+const ADVANCED_LICENSE_KEY_LABEL: &[u8] = b"clawnetes:advanced-license:v1";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedLicenseBlob {
+    version: u8,
+    nonce: String,
+    ciphertext: String,
+}
+
+fn verify_license_with_gumroad(key: &str) -> Result<(), String> {
+    let client = reqwest::blocking::Client::new();
+    let res = client
+        .post("https://api.gumroad.com/v2/licenses/verify")
+        .form(&[
+            ("product_id", ADVANCED_LICENSE_PRODUCT_ID),
+            ("license_key", key),
+        ])
+        .send()
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err("License verification failed (Invalid key or network error)".to_string());
+    }
+
+    let json: serde_json::Value = res
+        .json()
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    validate_license_response(&json)
+}
+
+fn validate_license_response(json: &serde_json::Value) -> Result<(), String> {
+    if let Some(success) = json.get("success").and_then(|v| v.as_bool()) {
+        if success {
+            if let Some(purchase) = json.get("purchase") {
+                if purchase
+                    .get("refunded")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return Err("License has been refunded.".to_string());
+                }
+                if purchase
+                    .get("chargebacked")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return Err("License has been chargebacked.".to_string());
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    Err("Invalid license key.".to_string())
+}
+
+fn app_license_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let app_dir = app
+        .path_resolver()
+        .app_data_dir()
+        .ok_or("Could not determine app data directory")?;
+    Ok(app_dir.join(ADVANCED_LICENSE_STORAGE_FILE))
+}
+
+fn derive_license_encryption_key(machine_id: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(ADVANCED_LICENSE_KEY_LABEL);
+    hasher.update(machine_id.as_bytes());
+    let digest = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&digest[..32]);
+    key
+}
+
+fn encrypt_saved_license_value(
+    license_key: &str,
+    encryption_key: &[u8; 32],
+) -> Result<String, String> {
+    let cipher = Aes256Gcm::new_from_slice(encryption_key)
+        .map_err(|e| format!("Failed to initialize license encryption: {}", e))?;
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, license_key.as_bytes())
+        .map_err(|e| format!("Failed to encrypt saved license: {}", e))?;
+
+    serde_json::to_string(&SavedLicenseBlob {
+        version: 1,
+        nonce: BASE64_STANDARD.encode(nonce_bytes),
+        ciphertext: BASE64_STANDARD.encode(ciphertext),
+    })
+    .map_err(|e| format!("Failed to serialize saved license: {}", e))
+}
+
+fn decrypt_saved_license_value(
+    serialized: &str,
+    encryption_key: &[u8; 32],
+) -> Result<String, String> {
+    let blob: SavedLicenseBlob = serde_json::from_str(serialized)
+        .map_err(|e| format!("Saved license file is invalid JSON: {}", e))?;
+    if blob.version != 1 {
+        return Err("Saved license file has an unsupported version.".to_string());
+    }
+
+    let nonce_bytes = BASE64_STANDARD
+        .decode(blob.nonce)
+        .map_err(|e| format!("Saved license nonce is invalid: {}", e))?;
+    if nonce_bytes.len() != 12 {
+        return Err("Saved license nonce has an invalid length.".to_string());
+    }
+    let ciphertext = BASE64_STANDARD
+        .decode(blob.ciphertext)
+        .map_err(|e| format!("Saved license ciphertext is invalid: {}", e))?;
+    let cipher = Aes256Gcm::new_from_slice(encryption_key)
+        .map_err(|e| format!("Failed to initialize saved license decryption: {}", e))?;
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
+        .map_err(|_| "Saved license cannot be decrypted on this machine.".to_string())?;
+
+    String::from_utf8(plaintext).map_err(|e| format!("Saved license contains invalid UTF-8: {}", e))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_first_nonempty_file(paths: &[PathBuf]) -> Result<Option<String>, String> {
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+
+        let content = fs::read_to_string(path).map_err(|e| {
+            format!(
+                "Failed to read machine identifier {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn parse_windows_machine_guid(output: &str) -> Option<String> {
+    output
+        .lines()
+        .find(|line| line.contains("MachineGuid"))
+        .and_then(|line| line.split_whitespace().last())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(target_os = "linux")]
+fn get_machine_identifier() -> Result<String, String> {
+    let candidates = vec![
+        PathBuf::from("/etc/machine-id"),
+        PathBuf::from("/var/lib/dbus/machine-id"),
+    ];
+    read_first_nonempty_file(&candidates)?
+        .ok_or("Could not determine Linux machine identifier.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn get_machine_identifier() -> Result<String, String> {
+    let output = Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\Microsoft\Cryptography",
+            "/v",
+            "MachineGuid",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to read Windows machine identifier: {}", e))?;
+    if !output.status.success() {
+        return Err("Failed to read Windows machine identifier.".to_string());
+    }
+    parse_windows_machine_guid(&String::from_utf8_lossy(&output.stdout))
+        .ok_or("Could not parse Windows machine identifier.".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn get_machine_identifier() -> Result<String, String> {
+    let output = Command::new("ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .map_err(|e| format!("Failed to read macOS machine identifier: {}", e))?;
+    if !output.status.success() {
+        return Err("Failed to read macOS machine identifier.".to_string());
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find(|line| line.contains("IOPlatformUUID"))
+        .and_then(|line| line.split('"').nth(3))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or("Could not parse macOS machine identifier.".to_string())
+}
+
+fn write_saved_license(app: &tauri::AppHandle, license_key: &str) -> Result<(), String> {
+    let path = app_license_storage_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create license storage directory: {}", e))?;
+    }
+
+    let machine_id = get_machine_identifier()?;
+    let encryption_key = derive_license_encryption_key(&machine_id);
+    let encrypted = encrypt_saved_license_value(license_key, &encryption_key)?;
+    fs::write(&path, encrypted)
+        .map_err(|e| format!("Failed to write saved license file: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        let permissions = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&path, permissions)
+            .map_err(|e| format!("Failed to secure saved license file permissions: {}", e))?;
+    }
+
+    Ok(())
+}
+
+fn read_saved_license(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    let path = app_license_storage_path(app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let serialized = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read saved license file: {}", e))?;
+    let machine_id = get_machine_identifier()?;
+    let encryption_key = derive_license_encryption_key(&machine_id);
+    let license_key = decrypt_saved_license_value(&serialized, &encryption_key)?;
+
+    if license_key.trim().is_empty() {
+        return Err("Saved license file contains an empty license key.".to_string());
+    }
+
+    Ok(Some(license_key))
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -407,6 +658,122 @@ fn get_provider_auth_map(
         );
     }
     provider_auths
+}
+
+fn required_plugin_for_oauth_provider_id(oauth_provider_id: &str) -> Option<&'static str> {
+    match oauth_provider_id {
+        "google-gemini-cli" => Some("google-gemini-cli-auth"),
+        _ => None,
+    }
+}
+
+fn oauth_failure_guidance(oauth_provider_id: &str) -> Option<&'static str> {
+    match oauth_provider_id {
+        "google-gemini-cli" => Some(
+            "Gemini CLI OAuth uses Google Code Assist and may be rejected for some Google accounts. Make sure the Gemini CLI is installed, try setting GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT_ID if your account needs a project, or switch the Google provider auth method back to Gemini API Key.",
+        ),
+        _ => None,
+    }
+}
+
+fn decorate_oauth_launch_error(oauth_provider_id: &str, err: String) -> String {
+    match oauth_failure_guidance(oauth_provider_id) {
+        Some(guidance) => format!("{} {}", err, guidance),
+        None => err,
+    }
+}
+
+fn required_plugin_for_skill_id(skill_id: &str) -> Option<&'static str> {
+    match skill_id {
+        "gemini" => Some("google-gemini-cli-auth"),
+        _ => None,
+    }
+}
+
+fn collect_required_plugin_ids(
+    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
+    skills: Option<&Vec<String>>,
+) -> Vec<String> {
+    let mut required = std::collections::BTreeSet::new();
+
+    for auth in provider_auths.values() {
+        if normalize_auth_mode(&auth.auth_method) != "oauth" {
+            continue;
+        }
+
+        let oauth_provider_id = auth
+            .oauth_provider_id
+            .as_deref()
+            .unwrap_or(auth.auth_method.as_str());
+        if let Some(plugin_id) = required_plugin_for_oauth_provider_id(oauth_provider_id) {
+            required.insert(plugin_id.to_string());
+        }
+    }
+
+    for skill_id in skills.into_iter().flatten() {
+        if let Some(plugin_id) = required_plugin_for_skill_id(skill_id) {
+            required.insert(plugin_id.to_string());
+        }
+    }
+
+    required.into_iter().collect()
+}
+
+fn merge_enabled_plugin_entries(config: &mut serde_json::Value, plugin_ids: &[String]) {
+    if plugin_ids.is_empty() {
+        return;
+    }
+
+    if let Some(obj) = config.as_object_mut() {
+        let plugins_entry = obj
+            .entry("plugins".to_string())
+            .or_insert(serde_json::json!({ "entries": {} }));
+        if let Some(entries) = plugins_entry
+            .get_mut("entries")
+            .and_then(|value| value.as_object_mut())
+        {
+            for plugin_id in plugin_ids {
+                entries.insert(plugin_id.clone(), serde_json::json!({ "enabled": true }));
+            }
+        }
+    }
+}
+
+fn enable_openclaw_plugin(plugin_id: &str) -> Result<(), String> {
+    shell_command(&format!(
+        "openclaw plugins enable {}",
+        shell_single_quote(plugin_id)
+    ))
+    .map(|_| ())
+}
+
+fn provider_id_is_available(oauth_provider_id: &str) -> Result<bool, String> {
+    let output = shell_command("openclaw plugins list --json")?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&output).map_err(|e| format!("Failed to parse plugin list: {}", e))?;
+
+    Ok(parsed
+        .get("plugins")
+        .and_then(|plugins| plugins.as_array())
+        .map(|plugins| {
+            plugins.iter().any(|plugin| {
+                plugin
+                    .get("status")
+                    .and_then(|status| status.as_str())
+                    .map(|status| status == "loaded")
+                    .unwrap_or(false)
+                    && plugin
+                        .get("providerIds")
+                        .and_then(|provider_ids| provider_ids.as_array())
+                        .map(|provider_ids| {
+                            provider_ids
+                                .iter()
+                                .any(|provider_id| provider_id.as_str() == Some(oauth_provider_id))
+                        })
+                        .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false))
 }
 
 fn resolve_profile_name(provider: &str, provider_auth: &ProviderAuthData) -> String {
@@ -1570,6 +1937,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         auth_provider_id_for_config(&config.provider, &primary_provider_auth, &provider_auths);
     let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
     let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
+    let required_plugin_ids = collect_required_plugin_ids(&provider_auths, config.skills.as_ref());
 
     // Telegram config will be added to the JSON object
 
@@ -1751,17 +2119,13 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
     });
 
+    merge_enabled_plugin_entries(&mut config_val, &required_plugin_ids);
+
     // Add Telegram if enabled
     if let Some(ref token) = config.telegram_token {
         if !token.is_empty() {
+            merge_enabled_plugin_entries(&mut config_val, &["telegram".to_string()]);
             if let Some(obj) = config_val.as_object_mut() {
-                obj.insert(
-                    "plugins".to_string(),
-                    serde_json::json!({
-                        "entries": { "telegram": { "enabled": true } }
-                    }),
-                );
-
                 let mut channel_config = serde_json::json!({
                     "botToken": token,
                     "name": "Primary Bot"
@@ -1802,21 +2166,8 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     // Add WhatsApp config inline if enabled
     if config.whatsapp_enabled.unwrap_or(false) {
         let dm_policy = config.whatsapp_dm_policy.as_deref().unwrap_or("open");
+        merge_enabled_plugin_entries(&mut config_val, &["whatsapp".to_string()]);
         if let Some(obj) = config_val.as_object_mut() {
-            // Merge plugins entries
-            let plugins_entry = obj
-                .entry("plugins".to_string())
-                .or_insert(serde_json::json!({ "entries": {} }));
-            if let Some(entries) = plugins_entry
-                .get_mut("entries")
-                .and_then(|e| e.as_object_mut())
-            {
-                entries.insert(
-                    "whatsapp".to_string(),
-                    serde_json::json!({ "enabled": true }),
-                );
-            }
-
             // Merge channels
             let channels_entry = obj
                 .entry("channels".to_string())
@@ -2132,6 +2483,8 @@ Serve {}."#,
         );
     }
 
+    let required_plugin_ids = collect_required_plugin_ids(&provider_auths, config.skills.as_ref());
+
     // Plugins
     if let Some(ref token) = config.telegram_token {
         if !token.is_empty() {
@@ -2140,6 +2493,17 @@ Serve {}."#,
                 &format!("{}openclaw plugins enable telegram", nvm_prefix),
             );
         }
+    }
+
+    for plugin_id in &required_plugin_ids {
+        let _ = execute_ssh(
+            &sess,
+            &format!(
+                "{}openclaw plugins enable {}",
+                nvm_prefix,
+                shell_single_quote(plugin_id)
+            ),
+        );
     }
 
     if config.whatsapp_enabled.unwrap_or(false) {}
@@ -2498,9 +2862,26 @@ fn start_provider_auth(
     method: String,
     oauth_provider_id: String,
 ) -> Result<ProviderAuthData, String> {
+    if let Some(plugin_id) = required_plugin_for_oauth_provider_id(&oauth_provider_id) {
+        enable_openclaw_plugin(plugin_id).map_err(|err| {
+            format!(
+                "Gemini CLI OAuth depends on the OpenClaw plugin `{}`. Clawnetes tried to enable it automatically, but that failed: {}",
+                plugin_id, err
+            )
+        })?;
+
+        if !provider_id_is_available(&oauth_provider_id)? {
+            return Err(format!(
+                "Gemini CLI OAuth depends on the OpenClaw plugin `{}`. Clawnetes enabled that plugin, but the provider `{}` is still unavailable in OpenClaw.",
+                plugin_id, oauth_provider_id
+            ));
+        }
+    }
+
     cleanup_stale_oauth_listener(&oauth_provider_id)?;
     let cmd = build_provider_auth_command(&provider, &method, &oauth_provider_id);
-    launch_provider_auth_terminal(&cmd)?;
+    launch_provider_auth_terminal(&cmd)
+        .map_err(|err| decorate_oauth_launch_error(&oauth_provider_id, err))?;
 
     let auth_config = read_provider_auth_profiles()?;
     resolve_provider_auth_data(&provider, &auth_config)
@@ -2774,6 +3155,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         auth_provider_id_for_config(&config.provider, &primary_provider_auth, &provider_auths);
     let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
     let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
+    let required_plugin_ids = collect_required_plugin_ids(&provider_auths, config.skills.as_ref());
 
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.as_deref().unwrap_or("loopback");
@@ -2942,17 +3324,13 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         }
     }
 
+    merge_enabled_plugin_entries(&mut config_json, &required_plugin_ids);
+
     // Add Telegram config inline (avoids hot-reload conflicts from openclaw config set)
     if let Some(ref token) = config.telegram_token {
         if !token.is_empty() {
+            merge_enabled_plugin_entries(&mut config_json, &["telegram".to_string()]);
             if let Some(obj) = config_json.as_object_mut() {
-                obj.insert(
-                    "plugins".to_string(),
-                    serde_json::json!({
-                        "entries": { "telegram": { "enabled": true } }
-                    }),
-                );
-
                 let dm_policy = if config.preserve_state == Some(true) {
                     telegram_dm_policy.unwrap_or_else(|| "allowlist".to_string())
                 } else {
@@ -2990,21 +3368,8 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     // Add WhatsApp config inline if enabled
     if config.whatsapp_enabled.unwrap_or(false) {
         let dm_policy = config.whatsapp_dm_policy.as_deref().unwrap_or("open");
+        merge_enabled_plugin_entries(&mut config_json, &["whatsapp".to_string()]);
         if let Some(obj) = config_json.as_object_mut() {
-            // Merge plugins entries (may already have telegram)
-            let plugins_entry = obj
-                .entry("plugins".to_string())
-                .or_insert(serde_json::json!({ "entries": {} }));
-            if let Some(entries) = plugins_entry
-                .get_mut("entries")
-                .and_then(|e| e.as_object_mut())
-            {
-                entries.insert(
-                    "whatsapp".to_string(),
-                    serde_json::json!({ "enabled": true }),
-                );
-            }
-
             // Merge channels (may already have telegram)
             let channels_entry = obj
                 .entry("channels".to_string())
@@ -4023,29 +4388,204 @@ fn shell_command(cmd: &str) -> Result<String, String> {
 
 #[command]
 fn check_pairing_status(remote: Option<RemoteInfo>) -> Result<bool, String> {
-    // Check dmPolicy via CLI to get actual active state
-    let cmd_raw = "openclaw config get channels.telegram.accounts.default.dmPolicy";
-    let output = if let Some(r) = remote {
+    if let Some(r) = remote {
         let sess = connect_ssh(&r)?;
         let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
         let prefix = get_env_prefix(&os_type);
-        execute_ssh(&sess, &format!("{}{}", prefix, cmd_raw))
+
+        if let Some(policy) = read_telegram_dm_policy_via_cli(|cmd| execute_ssh(&sess, &format!("{}{}", prefix, cmd)))? {
+            if telegram_pairing_status_from_dm_policy(&policy) {
+                return Ok(true);
+            }
+        }
+
+        if let Some(policy) =
+            read_telegram_dm_policy_from_config_str(&execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?)
+        {
+            if telegram_pairing_status_from_dm_policy(&policy) {
+                return Ok(true);
+            }
+        }
+
+        return telegram_allow_from_is_linked_remote(&sess);
+    }
+
+    if let Some(policy) = read_telegram_dm_policy_via_cli(shell_command)? {
+        if telegram_pairing_status_from_dm_policy(&policy) {
+            return Ok(true);
+        }
+    }
+
+    let home_dir = dirs::home_dir().ok_or("Could not determine local home directory.")?;
+    let config_path = home_dir.join(".openclaw").join("openclaw.json");
+    if let Ok(config_str) = fs::read_to_string(&config_path) {
+        if let Some(policy) = read_telegram_dm_policy_from_config_str(&config_str) {
+            if telegram_pairing_status_from_dm_policy(&policy) {
+                return Ok(true);
+            }
+        }
+    }
+
+    let credentials_dir = home_dir.join(".openclaw").join("credentials");
+    Ok(telegram_allow_from_is_linked_local(&credentials_dir))
+}
+
+fn telegram_pairing_status_from_dm_policy(policy: &str) -> bool {
+    policy.trim().trim_matches('"') != "pairing"
+}
+
+fn parse_config_string_output(output: &str) -> Option<String> {
+    let value = output.trim().trim_matches('"');
+    if value.is_empty() || value == "null" || value == "undefined" {
+        None
     } else {
-        shell_command(cmd_raw)
+        Some(value.to_string())
+    }
+}
+
+fn extract_telegram_dm_policy_from_config(config: &serde_json::Value) -> Option<String> {
+    config
+        .get("channels")
+        .and_then(|c| c.get("telegram"))
+        .and_then(|t| t.get("accounts"))
+        .and_then(|a| a.get("default"))
+        .and_then(|m| m.get("dmPolicy"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            config
+                .get("channels")
+                .and_then(|c| c.get("telegram"))
+                .and_then(|t| t.get("dmPolicy"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+}
+
+fn read_telegram_dm_policy_from_config_str(config_str: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(config_str)
+        .ok()
+        .and_then(|config| extract_telegram_dm_policy_from_config(&config))
+}
+
+fn read_telegram_dm_policy_via_cli<F>(mut run_command: F) -> Result<Option<String>, String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    for cmd in [
+        "openclaw config get channels.telegram.accounts.default.dmPolicy",
+        "openclaw config get channels.telegram.dmPolicy",
+    ] {
+        match run_command(cmd) {
+            Ok(output) => {
+                if let Some(policy) = parse_config_string_output(&output) {
+                    return Ok(Some(policy));
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    Ok(None)
+}
+
+fn telegram_allow_from_entries_from_str(content: &str) -> Option<usize> {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|json| json.get("allowFrom").and_then(|value| value.as_array()).map(|items| items.len()))
+}
+
+fn is_telegram_allow_from_filename(name: &str) -> bool {
+    name.starts_with("telegram") && name.ends_with("-allowFrom.json")
+}
+
+fn telegram_allow_from_is_linked_local(credentials_dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(credentials_dir) else {
+        return false;
     };
 
-    match output {
-        Ok(policy) => {
-            // If policy is NOT "pairing", assume paired/configured
-            let p = policy.trim().trim_matches('"');
-            Ok(p != "pairing")
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            return false;
+        };
+        if !path.is_file() || !is_telegram_allow_from_filename(name) {
+            return false;
         }
-        Err(_) => {
-            // If command fails, fallback to assuming not paired or error
-            // But if it fails, maybe openclaw isn't running or config is bad.
-            // Let's return false to be safe (ask to pair).
-            Ok(false)
+
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| telegram_allow_from_entries_from_str(&content))
+            .map(|count| count > 0)
+            .unwrap_or(false)
+    })
+}
+
+fn telegram_allow_from_is_linked_remote(sess: &Session) -> Result<bool, String> {
+    let files = execute_ssh(
+        sess,
+        "find \"$HOME/.openclaw/credentials\" -maxdepth 1 -type f -name 'telegram*-allowFrom.json' 2>/dev/null",
+    )?;
+
+    for file in files.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let content = execute_ssh(sess, &format!("cat {}", shell_single_quote(file)))?;
+        if telegram_allow_from_entries_from_str(&content).unwrap_or(0) > 0 {
+            return Ok(true);
         }
+    }
+
+    Ok(false)
+}
+
+fn whatsapp_session_is_linked(session_dir: &Path) -> bool {
+    if !session_dir.exists() {
+        return false;
+    }
+
+    let mut stack = vec![session_dir.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if child.is_file() {
+                return true;
+            }
+            if child.is_dir() {
+                stack.push(child);
+            }
+        }
+    }
+
+    false
+}
+
+fn check_whatsapp_link_status(remote: Option<RemoteInfo>) -> Result<bool, String> {
+    if let Some(r) = remote {
+        let sess = connect_ssh(&r)?;
+        let output = execute_ssh(
+            &sess,
+            "if [ -d \"$HOME/.openclaw/credentials/whatsapp/default\" ] && find \"$HOME/.openclaw/credentials/whatsapp/default\" -type f 2>/dev/null | grep -q .; then printf linked; else printf unlinked; fi",
+        )?;
+        Ok(output.trim() == "linked")
+    } else {
+        let home_dir = dirs::home_dir().ok_or("Could not determine local home directory.")?;
+        let session_dir = home_dir.join(".openclaw/credentials/whatsapp/default");
+        Ok(whatsapp_session_is_linked(&session_dir))
+    }
+}
+
+#[command]
+fn check_messaging_link_status(
+    channel: String,
+    remote: Option<RemoteInfo>,
+) -> Result<bool, String> {
+    match channel.as_str() {
+        "telegram" => check_pairing_status(remote),
+        "whatsapp" => check_whatsapp_link_status(remote),
+        "none" => Ok(true),
+        _ => Err(format!("Unsupported messaging channel: {}", channel)),
     }
 }
 
@@ -4474,16 +5014,11 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     }
 
     // Check Pairing Status
-    let dm_policy = oc_config
-        .get("channels")
-        .and_then(|c| c.get("telegram"))
-        .and_then(|t| t.get("accounts"))
-        .and_then(|a| a.get("default"))
-        .and_then(|m| m.get("dmPolicy"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("default");
-
-    let is_paired = dm_policy != "pairing";
+    let credentials_dir = PathBuf::from(&home_dir).join(".openclaw").join("credentials");
+    let is_paired = extract_telegram_dm_policy_from_config(&oc_config)
+        .map(|policy| telegram_pairing_status_from_dm_policy(&policy))
+        .unwrap_or(false)
+        || telegram_allow_from_is_linked_local(&credentials_dir);
 
     // Read additional workspace markdown files
     let tools_md_s = read_file_content(&format!("{}/.openclaw/workspace/TOOLS.md", home_dir));
@@ -4620,6 +5155,23 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })
+}
+
+#[command]
+fn has_saved_license(app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(read_saved_license(&app)?.is_some())
+}
+
+#[command]
+fn verify_and_store_license(app: tauri::AppHandle, key: String) -> Result<bool, String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err("License key is required.".to_string());
+    }
+
+    verify_license_with_gumroad(trimmed)?;
+    write_saved_license(&app, trimmed)?;
+    Ok(true)
 }
 
 #[command]
@@ -5388,7 +5940,10 @@ fn main() {
             get_remote_gateway_token,
             verify_tunnel_connectivity,
             get_current_config,
+            has_saved_license,
+            verify_and_store_license,
             check_pairing_status,
+            check_messaging_link_status,
             get_ollama_models,
             get_lmstudio_models,
             validate_openclaw_config,
@@ -5405,6 +5960,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_agent_config_deserialization() {
@@ -5697,6 +6253,82 @@ mod tests {
     }
 
     #[test]
+    fn test_required_plugin_for_oauth_provider_id_maps_gemini_cli() {
+        assert_eq!(
+            required_plugin_for_oauth_provider_id("google-gemini-cli"),
+            Some("google-gemini-cli-auth")
+        );
+        assert_eq!(required_plugin_for_oauth_provider_id("openai-codex"), None);
+    }
+
+    #[test]
+    fn test_decorate_oauth_launch_error_adds_gemini_guidance() {
+        let message = decorate_oauth_launch_error(
+            "google-gemini-cli",
+            "OpenClaw auth exited with status 1.".to_string(),
+        );
+
+        assert!(message.contains("OpenClaw auth exited with status 1."));
+        assert!(message.contains("GOOGLE_CLOUD_PROJECT"));
+        assert!(message.contains("Gemini API Key"));
+    }
+
+    #[test]
+    fn test_collect_required_plugin_ids_includes_gemini_oauth_and_skill_once() {
+        let mut provider_auths = std::collections::HashMap::new();
+        provider_auths.insert(
+            "google".to_string(),
+            ProviderAuthData {
+                auth_method: "google-gemini-cli".to_string(),
+                token: String::new(),
+                profile_key: None,
+                profile: None,
+                oauth_provider_id: Some("google-gemini-cli".to_string()),
+            },
+        );
+
+        let skills = vec!["gemini".to_string()];
+        let required = collect_required_plugin_ids(&provider_auths, Some(&skills));
+
+        assert_eq!(required, vec!["google-gemini-cli-auth".to_string()]);
+    }
+
+    #[test]
+    fn test_collect_required_plugin_ids_ignores_plain_google_token_auth() {
+        let mut provider_auths = std::collections::HashMap::new();
+        provider_auths.insert(
+            "google".to_string(),
+            ProviderAuthData {
+                auth_method: "token".to_string(),
+                token: "test-token".to_string(),
+                profile_key: None,
+                profile: None,
+                oauth_provider_id: None,
+            },
+        );
+
+        let required = collect_required_plugin_ids(&provider_auths, None);
+
+        assert!(required.is_empty());
+    }
+
+    #[test]
+    fn test_merge_enabled_plugin_entries_adds_required_plugin_entry() {
+        let mut config = serde_json::json!({});
+        merge_enabled_plugin_entries(&mut config, &["google-gemini-cli-auth".to_string()]);
+
+        assert_eq!(
+            config
+                .get("plugins")
+                .and_then(|plugins| plugins.get("entries"))
+                .and_then(|entries| entries.get("google-gemini-cli-auth"))
+                .and_then(|plugin| plugin.get("enabled"))
+                .and_then(|enabled| enabled.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn test_build_provider_auth_command_uses_plugin_login_for_codex() {
         assert_eq!(
             build_provider_auth_command("openai", "openai-codex", "openai-codex"),
@@ -5979,6 +6611,142 @@ mod tests {
     }
 
     #[test]
+    fn test_telegram_pairing_status_from_dm_policy() {
+        assert!(telegram_pairing_status_from_dm_policy("\"allowlist\""));
+        assert!(telegram_pairing_status_from_dm_policy("open"));
+        assert!(telegram_pairing_status_from_dm_policy("\"open\""));
+        assert!(!telegram_pairing_status_from_dm_policy("pairing"));
+        assert!(!telegram_pairing_status_from_dm_policy("\"pairing\""));
+    }
+
+    #[test]
+    fn test_extract_telegram_dm_policy_from_config_supports_default_and_legacy_layouts() {
+        let account_scoped = serde_json::json!({
+            "channels": {
+                "telegram": {
+                    "accounts": {
+                        "default": {
+                            "dmPolicy": "open"
+                        }
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            extract_telegram_dm_policy_from_config(&account_scoped),
+            Some("open".to_string())
+        );
+
+        let legacy = serde_json::json!({
+            "channels": {
+                "telegram": {
+                    "dmPolicy": "pairing"
+                }
+            }
+        });
+        assert_eq!(
+            extract_telegram_dm_policy_from_config(&legacy),
+            Some("pairing".to_string())
+        );
+    }
+
+    #[test]
+    fn test_read_telegram_dm_policy_from_config_str_fallback_detects_linked_state() {
+        let config = r#"{
+            "channels": {
+                "telegram": {
+                    "dmPolicy": "open"
+                }
+            }
+        }"#;
+
+        let policy = read_telegram_dm_policy_from_config_str(config);
+        assert_eq!(policy, Some("open".to_string()));
+        assert!(telegram_pairing_status_from_dm_policy(policy.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn test_read_telegram_dm_policy_via_cli_tries_legacy_after_primary_failure() {
+        let mut commands = Vec::new();
+        let policy = read_telegram_dm_policy_via_cli(|cmd| {
+            commands.push(cmd.to_string());
+            match cmd {
+                "openclaw config get channels.telegram.accounts.default.dmPolicy" => {
+                    Err("missing".to_string())
+                }
+                "openclaw config get channels.telegram.dmPolicy" => Ok("\"open\"".to_string()),
+                _ => Err("unexpected command".to_string()),
+            }
+        })
+        .expect("cli fallback succeeds");
+
+        assert_eq!(policy, Some("open".to_string()));
+        assert_eq!(
+            commands,
+            vec![
+                "openclaw config get channels.telegram.accounts.default.dmPolicy".to_string(),
+                "openclaw config get channels.telegram.dmPolicy".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_telegram_allow_from_entries_from_str_detects_approved_senders() {
+        let content = r#"{
+            "version": 1,
+            "allowFrom": ["5162540072"]
+        }"#;
+        assert_eq!(telegram_allow_from_entries_from_str(content), Some(1));
+
+        let empty = r#"{
+            "version": 1,
+            "allowFrom": []
+        }"#;
+        assert_eq!(telegram_allow_from_entries_from_str(empty), Some(0));
+    }
+
+    #[test]
+    fn test_telegram_allow_from_is_linked_local_detects_account_file() {
+        let temp_dir = std::env::temp_dir()
+            .join(format!("clawnetes-telegram-allowfrom-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).expect("create temp telegram credentials dir");
+        fs::write(
+            temp_dir.join("telegram-default-allowFrom.json"),
+            r#"{"version":1,"allowFrom":["5162540072"]}"#,
+        )
+        .expect("write allowFrom file");
+
+        assert!(telegram_allow_from_is_linked_local(&temp_dir));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_whatsapp_session_is_linked_detects_nested_files() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("clawnetes-whatsapp-test-{}", uuid::Uuid::new_v4()));
+        let nested = temp_dir.join("nested");
+        fs::create_dir_all(&nested).expect("create temp whatsapp dir");
+        fs::write(nested.join("session.json"), "{}").expect("write temp whatsapp file");
+
+        assert!(whatsapp_session_is_linked(&temp_dir));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_whatsapp_session_is_linked_false_for_missing_or_empty_dir() {
+        let missing_dir =
+            std::env::temp_dir().join(format!("clawnetes-whatsapp-test-{}", uuid::Uuid::new_v4()));
+        assert!(!whatsapp_session_is_linked(&missing_dir));
+
+        fs::create_dir_all(&missing_dir).expect("create empty whatsapp dir");
+        assert!(!whatsapp_session_is_linked(&missing_dir));
+
+        let _ = fs::remove_dir_all(&missing_dir);
+    }
+
+    #[test]
     fn test_parse_dashboard_url_cli_output_finds_url_amid_other_output() {
         let output = "Doctor warnings...\nDashboard URL: http://127.0.0.1:18789/#token=abc123\nCopied to clipboard.\n";
         assert_eq!(
@@ -6178,5 +6946,125 @@ mod tests {
         };
         assert!(cmd.contains("rm -rf"));
         assert!(cmd.contains("$HOME/.openclaw"));
+    }
+
+    #[test]
+    fn test_validate_license_response_accepts_clean_purchase() {
+        let response = serde_json::json!({
+            "success": true,
+            "purchase": {
+                "refunded": false,
+                "chargebacked": false
+            }
+        });
+
+        assert!(validate_license_response(&response).is_ok());
+    }
+
+    #[test]
+    fn test_validate_license_response_rejects_refunded_purchase() {
+        let response = serde_json::json!({
+            "success": true,
+            "purchase": {
+                "refunded": true,
+                "chargebacked": false
+            }
+        });
+
+        assert_eq!(
+            validate_license_response(&response).unwrap_err(),
+            "License has been refunded."
+        );
+    }
+
+    #[test]
+    fn test_validate_license_response_rejects_chargebacked_purchase() {
+        let response = serde_json::json!({
+            "success": true,
+            "purchase": {
+                "refunded": false,
+                "chargebacked": true
+            }
+        });
+
+        assert_eq!(
+            validate_license_response(&response).unwrap_err(),
+            "License has been chargebacked."
+        );
+    }
+
+    #[test]
+    fn test_validate_license_response_rejects_unsuccessful_response() {
+        let response = serde_json::json!({
+            "success": false
+        });
+
+        assert_eq!(
+            validate_license_response(&response).unwrap_err(),
+            "Invalid license key."
+        );
+    }
+
+    #[test]
+    fn test_encrypt_saved_license_round_trip() {
+        let key = derive_license_encryption_key("machine-a");
+        let encrypted =
+            encrypt_saved_license_value("LICENSE-123", &key).expect("license should encrypt");
+        let decrypted =
+            decrypt_saved_license_value(&encrypted, &key).expect("license should decrypt");
+
+        assert_eq!(decrypted, "LICENSE-123");
+    }
+
+    #[test]
+    fn test_saved_license_decrypt_fails_with_different_machine_key() {
+        let key = derive_license_encryption_key("machine-a");
+        let wrong_key = derive_license_encryption_key("machine-b");
+        let encrypted =
+            encrypt_saved_license_value("LICENSE-123", &key).expect("license should encrypt");
+
+        assert_eq!(
+            decrypt_saved_license_value(&encrypted, &wrong_key).unwrap_err(),
+            "Saved license cannot be decrypted on this machine."
+        );
+    }
+
+    #[test]
+    fn test_parse_windows_machine_guid_extracts_value() {
+        let output = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\r\n    MachineGuid    REG_SZ    1234-5678\r\n";
+        assert_eq!(
+            parse_windows_machine_guid(output).as_deref(),
+            Some("1234-5678")
+        );
+    }
+
+    #[test]
+    fn test_read_first_nonempty_file_prefers_first_nonempty_candidate() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("clawnetes-license-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let first = temp_dir.join("first");
+        let second = temp_dir.join("second");
+        fs::write(&first, "   ").expect("first file should be written");
+        fs::write(&second, "machine-id-123\n").expect("second file should be written");
+
+        let result = read_first_nonempty_file(&[first.clone(), second.clone()])
+            .expect("machine id lookup should succeed");
+
+        assert_eq!(result.as_deref(), Some("machine-id-123"));
+
+        let _ = fs::remove_file(first);
+        let _ = fs::remove_file(second);
+        let _ = fs::remove_dir(temp_dir);
+    }
+
+    #[test]
+    fn test_decrypt_saved_license_rejects_corrupt_payload() {
+        let key = derive_license_encryption_key("machine-a");
+        assert!(decrypt_saved_license_value(
+            "{\"version\":1,\"nonce\":\"bad\",\"ciphertext\":\"bad\"}",
+            &key
+        )
+        .is_err());
     }
 }

@@ -10,6 +10,8 @@ import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
 import { getAgentSessionInitIds } from "./utils/agentSessions";
+import { getAdvancedTransitionAction } from "./utils/licenseGate";
+import { getMessagingChannelFromConfig, getTelegramPairingDisplayCode, hasMessagingSettingsChanged, isMessagingLinked, shouldShowTelegramPairing, shouldShowWhatsAppPairing } from "./utils/messagingPairing";
 import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
@@ -17,8 +19,7 @@ import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 
 function App() {
-  const handleAdvancedTransition = async () => {
-    // License key requirement removed for all installation types
+  const continueToAdvancedSettings = async () => {
     setMode("advanced");
     setPairingStatus("");
     setSkipBasicConfig(true);
@@ -35,6 +36,21 @@ function App() {
       }
     }
     setStep(10.5);
+  };
+
+  const handleAdvancedTransition = async () => {
+    const nextAction = getAdvancedTransitionAction(licenseStatusLoaded, licenseUnlocked);
+    if (nextAction === "wait") {
+      return;
+    }
+
+    if (nextAction === "prompt") {
+      setLicenseError(licenseStatusError);
+      setShowLicenseModal(true);
+      return;
+    }
+
+    await continueToAdvancedSettings();
   };
 
   const [step, setStep] = useState(0.5); // Start at Welcome page
@@ -78,6 +94,13 @@ function App() {
   const [maintenanceStatus, setMaintenanceStatus] = useState("");
   const [selectedMaint, setSelectedMaint] = useState<string>("repair");
   const [maintCompleted, setMaintCompleted] = useState(false);
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [verifyingLicense, setVerifyingLicense] = useState(false);
+  const [licenseError, setLicenseError] = useState("");
+  const [licenseUnlocked, setLicenseUnlocked] = useState(false);
+  const [licenseStatusLoaded, setLicenseStatusLoaded] = useState(false);
+  const [licenseStatusError, setLicenseStatusError] = useState("");
 
   // Service Keys State
   const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
@@ -283,6 +306,33 @@ function App() {
   useEffect(() => { checkSystem(true); }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadSavedLicenseState = async () => {
+      try {
+        const unlocked = await invoke<boolean>("has_saved_license");
+        if (cancelled) return;
+        setLicenseUnlocked(unlocked);
+        setLicenseStatusError("");
+      } catch (e) {
+        if (cancelled) return;
+        setLicenseUnlocked(false);
+        setLicenseStatusError(String(e));
+      } finally {
+        if (!cancelled) {
+          setLicenseStatusLoaded(true);
+        }
+      }
+    };
+
+    loadSavedLicenseState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (step === 17) {
       const checkPairing = async () => {
         try {
@@ -292,13 +342,21 @@ function App() {
             password: remotePassword || null,
             privateKeyPath: remotePrivateKeyPath || null
           } : null;
-          const status: boolean = await invoke("check_pairing_status", { remote: remoteConfig });
-          if (status) setIsPaired(true);
+          const status: boolean = await invoke("check_messaging_link_status", {
+            channel: messagingChannel,
+            remote: remoteConfig
+          });
+          if (messagingChannel === "telegram") {
+            setIsPaired(status);
+          } else if (messagingChannel === "whatsapp") {
+            setWhatsappPaired(status);
+            if (status) setWhatsappPhoneSubmitted(true);
+          }
         } catch (e) { console.error("Failed to check pairing status:", e); }
       };
-      checkPairing();
+      if (messagingChannel !== "none") checkPairing();
     }
-  }, [step]);
+  }, [step, messagingChannel, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath]);
 
   useEffect(() => {
     if (step !== 17) return;
@@ -520,6 +578,11 @@ function App() {
                   ? "OAuth will open automatically at the end of setup."
                   : "OAuth will open automatically after OpenClaw is installed and setup reaches the final step."}
             </p>
+            {normalizedProvider === "google" && auth.auth_method === "google-gemini-cli" && !hasCredential && (
+              <p className="input-hint" style={{ marginTop: "0.25rem", color: "var(--warning, #b45309)" }}>
+                This is an unofficial Google Code Assist integration. Some users have reported Google account restrictions after using third-party Gemini CLI clients. If Google rejects it, use the Gemini API key option instead, or set `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_PROJECT_ID` before retrying.
+              </p>
+            )}
             {!hasCredential && providerQueueItem && !completionResult && (
               <p className="input-hint" style={{ marginTop: "0.25rem", color: "var(--text-muted)" }}>
                 Deferred until setup completion.
@@ -767,6 +830,7 @@ function App() {
     return {
       ...payload,
       sandbox_mode: payload.sandbox_mode ?? "off",
+      preserve_state: null,
       tools_mode: payload.tools_mode ?? null,
       tools_profile: normalizedPolicy.profile,
       allowed_tools: normalizedPolicy.allow,
@@ -791,16 +855,16 @@ function App() {
     return normalizeToolPolicy(
       config.tools_profile
         ? {
-            profile: config.tools_profile,
-            allow: config.allowed_tools,
-            deny: config.denied_tools,
-          }
+          profile: config.tools_profile,
+          allow: config.allowed_tools,
+          deny: config.denied_tools,
+        }
         : deriveToolPolicyFromLegacy(
-            config.tools_mode,
-            config.allowed_tools,
-            config.denied_tools,
-            availableSkillIds,
-          ),
+          config.tools_mode,
+          config.allowed_tools,
+          config.denied_tools,
+          availableSkillIds,
+        ),
       availableSkillIds,
     );
   }
@@ -936,6 +1000,24 @@ Managed by Clawnetes.`,
     };
   }
 
+  function getCurrentMessagingSettings() {
+    return {
+      channel: messagingChannel,
+      telegramToken,
+      whatsappDmPolicy,
+      whatsappPhoneNumber,
+    };
+  }
+
+  function getInitialMessagingSettings(initial: any) {
+    return {
+      channel: getMessagingChannelFromConfig(initial || {}),
+      telegramToken: initial?.telegram_token || "",
+      whatsappDmPolicy: initial?.whatsapp_dm_policy || null,
+      whatsappPhoneNumber: initial?.whatsapp_phone_number || "",
+    };
+  }
+
   function constructConfigPayload(providerAuthsOverride?: Record<string, ProviderAuthConfig>) {
     const mappedSandboxMode = sandboxMode === "full" ? "all" : (sandboxMode === "partial" ? "non-main" : "off");
     const defaultIdentity = `# IDENTITY.md - Who Am I?
@@ -1045,14 +1127,32 @@ Managed by Clawnetes.`,
       privateKeyPath: remotePrivateKeyPath || null
     } : null;
 
-    // Check pairing status live before applying config to ensure we don't overwrite it
+    // Check the active messaging channel state live before applying config so we
+    // don't force a redundant re-pair during reconfiguration.
     let actualIsPaired = isPaired;
+    let actualWhatsappPaired = whatsappPaired;
+    const currentMessagingSettings = getCurrentMessagingSettings();
+    const initialMessagingSettings = initialConfigRef.current
+      ? getInitialMessagingSettings(initialConfigRef.current)
+      : null;
+    const messagingSettingsChanged = initialMessagingSettings
+      ? hasMessagingSettingsChanged(initialMessagingSettings, currentMessagingSettings)
+      : true;
     if (checks.openclaw || isUpdate) {
       try {
-        const status: boolean = await invoke("check_pairing_status", { remote: remoteConfig });
-        if (status) {
-          actualIsPaired = true;
-          setIsPaired(true);
+        if (messagingChannel !== "none") {
+          const status: boolean = await invoke("check_messaging_link_status", {
+            channel: messagingChannel,
+            remote: remoteConfig
+          });
+          if (messagingChannel === "telegram") {
+            actualIsPaired = status;
+            setIsPaired(status);
+          } else if (messagingChannel === "whatsapp") {
+            actualWhatsappPaired = status;
+            setWhatsappPaired(status);
+            if (status) setWhatsappPhoneSubmitted(true);
+          }
         }
       } catch (e) {
         console.warn("Pre-install pairing check failed:", e);
@@ -1061,8 +1161,13 @@ Managed by Clawnetes.`,
 
     const configPayload = constructConfigPayload();
     const agentSessionIds = getAgentSessionInitIds(configPayload.agents);
-    // Ensure we preserve state if we found it was paired
-    configPayload.preserve_state = actualIsPaired;
+    const effectiveMessagingLinked = isMessagingLinked(messagingChannel, {
+      telegramPaired: actualIsPaired,
+      whatsappPaired: actualWhatsappPaired,
+    });
+    configPayload.preserve_state = initialMessagingSettings && !messagingSettingsChanged
+      ? true
+      : effectiveMessagingLinked;
 
     if (initialConfigRef.current) {
       const initialPayload = transformInitialToPayload(initialConfigRef.current);
@@ -1141,7 +1246,7 @@ Managed by Clawnetes.`,
         }
 
         setProgress("Finalizing setup...");
-        if (!actualIsPaired) {
+        if (shouldShowTelegramPairing(messagingChannel, actualIsPaired)) {
           const instruction: string = await invoke("generate_pairing_code");
           setPairingCode(instruction);
         }
@@ -1205,7 +1310,7 @@ Managed by Clawnetes.`,
         }
 
         setProgress("Finalizing setup...");
-        if (!actualIsPaired) {
+        if (shouldShowTelegramPairing(messagingChannel, actualIsPaired)) {
           const instruction: string = await invoke("generate_pairing_code");
           setPairingCode(instruction);
         }
@@ -1376,11 +1481,15 @@ Managed by Clawnetes.`,
       if (config.cron_jobs) setCronJobs(config.cron_jobs);
 
       // Load new fields
-      if (config.whatsapp_enabled) {
-        setMessagingChannel("whatsapp");
-        setWhatsappPaired(true);       // already connected; skip QR re-pairing
+      const loadedMessagingChannel = getMessagingChannelFromConfig(config);
+      setMessagingChannel(loadedMessagingChannel);
+      if (loadedMessagingChannel === "whatsapp") {
+        setWhatsappPaired(true);
         setWhatsappPhoneSubmitted(true);
-      } else if (config.telegram_token) setMessagingChannel("telegram");
+      } else if (loadedMessagingChannel === "none") {
+        setWhatsappPaired(false);
+        setWhatsappPhoneSubmitted(false);
+      }
       if (config.whatsapp_phone_number) setWhatsappPhoneNumber(config.whatsapp_phone_number);
       if (config.whatsapp_dm_policy) setWhatsappDmPolicy(config.whatsapp_dm_policy);
       if (config.thinking_level) setThinkingLevel(config.thinking_level);
@@ -1421,6 +1530,29 @@ Managed by Clawnetes.`,
 
       if (config.is_paired !== undefined) {
         setIsPaired(config.is_paired);
+      }
+
+      try {
+        if (loadedMessagingChannel !== "none") {
+          const remoteConfig = targetEnvironment === "cloud" ? {
+            ip: remoteIp,
+            user: remoteUser,
+            password: remotePassword || null,
+            privateKeyPath: remotePrivateKeyPath || null
+          } : null;
+          const linked: boolean = await invoke("check_messaging_link_status", {
+            channel: loadedMessagingChannel,
+            remote: remoteConfig
+          });
+          if (loadedMessagingChannel === "telegram") {
+            setIsPaired(linked);
+          } else if (loadedMessagingChannel === "whatsapp") {
+            setWhatsappPaired(linked);
+            setWhatsappPhoneSubmitted(linked || Boolean(config.whatsapp_phone_number));
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to refresh messaging link state:", e);
       }
 
       setMaintenanceStatus("✅ Configuration loaded.");
@@ -2088,21 +2220,21 @@ Managed by Clawnetes.`,
               const skill = availableSkills.find(sk => sk.id === s);
               return skill?.authMode === "oauth";
             }).length > 0 && (
-              <div className="form-group" style={{ marginTop: "1rem" }}>
-                <label>Skill OAuth (Deferred)</label>
-                {selectedSkills.filter(s => {
-                  const skill = availableSkills.find(sk => sk.id === s);
-                  return skill?.authMode === "oauth";
-                }).map(s => {
-                  const skill = availableSkills.find(sk => sk.id === s)!;
-                  return (
-                    <div key={s} style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                      {skill.name}: an OpenClaw terminal auth step will run at the end of setup.
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                <div className="form-group" style={{ marginTop: "1rem" }}>
+                  <label>Skill OAuth (Deferred)</label>
+                  {selectedSkills.filter(s => {
+                    const skill = availableSkills.find(sk => sk.id === s);
+                    return skill?.authMode === "oauth";
+                  }).map(s => {
+                    const skill = availableSkills.find(sk => sk.id === s)!;
+                    return (
+                      <div key={s} style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                        {skill.name}: an OpenClaw terminal auth step will run at the end of setup.
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
               <button className="primary" disabled={!LOCAL_PROVIDERS.has(provider) && !isOAuthMethod(getProviderAuth(provider).auth_method) && !getProviderAuth(provider).token} onClick={() => setStep(9)}>Next</button>
@@ -4208,13 +4340,13 @@ Managed by Clawnetes.`,
             )}
 
             <div className="pairing-result">
-              {!isPaired && (
+              {shouldShowTelegramPairing(messagingChannel, isPaired) && (
                 <>
                   <h3>Telegram Pairing</h3>
                   <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "0.5rem" }}>
                     Send any message to your bot to receive your code.
                   </p>
-                  <div className="pairing-code-display">{pairingCode.includes("Ready") ? "READY" : pairingCode}</div>
+                  <div className="pairing-code-display">{getTelegramPairingDisplayCode(pairingCode)}</div>
 
                   {telegramToken && (
                     <div className="form-group" style={{ marginTop: "2rem" }}>
@@ -4239,7 +4371,7 @@ Managed by Clawnetes.`,
               )}
 
               {/* WhatsApp QR Pairing */}
-              {messagingChannel === "whatsapp" && !whatsappPaired && (
+              {shouldShowWhatsAppPairing(messagingChannel, whatsappPaired) && (
                 <div style={{ marginTop: "2rem", padding: "1.5rem", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "12px" }}>
                   <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>WhatsApp Pairing</h3>
                   <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
@@ -4368,8 +4500,8 @@ Managed by Clawnetes.`,
                       Open Web Dashboard
                     </button>
                     {mode !== "advanced" && (
-                      <button className="secondary" onClick={handleAdvancedTransition}>
-                        Continue to Advanced Settings
+                      <button className="secondary" onClick={handleAdvancedTransition} disabled={!licenseStatusLoaded}>
+                        {licenseStatusLoaded ? "Continue to Advanced Settings" : "Checking license..."}
                       </button>
                     )}
                     <button className="secondary" onClick={() => invoke("close_app")}>
@@ -4379,7 +4511,7 @@ Managed by Clawnetes.`,
                   <div style={{ marginTop: "1.5rem", textAlign: "center" }}>
                     <a
                       href="#"
-                      onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawnetes"); }}
+                      onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
                       style={{ color: "var(--text-muted)", fontSize: "0.9rem", textDecoration: "underline", cursor: "pointer" }}
                     >
                       If you find OpenClaw useful, please consider making a small donation to support development.
@@ -4427,6 +4559,84 @@ Managed by Clawnetes.`,
           {renderStep()}
         </div>
       </main>
+
+      {showLicenseModal && (
+        <div className="modal-overlay" style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.7)", zIndex: 1000,
+          display: "flex", justifyContent: "center", alignItems: "center"
+        }}>
+          <div className="modal-content" style={{
+            backgroundColor: "var(--bg-card)", padding: "2rem", borderRadius: "12px",
+            width: "400px", maxWidth: "90%", border: "1px solid var(--border)"
+          }}>
+            <h3 style={{ marginTop: 0 }}>Advanced Setup License</h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+              Advanced features require a license key. You can purchase one from Gumroad.
+            </p>
+
+            <div className="form-group" style={{ marginTop: "1.5rem" }}>
+              <label>License Key</label>
+              <input
+                value={licenseKey}
+                onChange={(e) => setLicenseKey(e.target.value)}
+                placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
+                autoFocus
+              />
+            </div>
+
+            <div style={{ marginTop: "1rem", fontSize: "0.85rem" }}>
+              <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
+                style={{ color: "var(--primary)" }}
+              >
+                Get a license key &rarr;
+              </a>
+            </div>
+
+            {licenseError && (
+              <div className="error" style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--error)" }}>
+                {licenseError}
+              </div>
+            )}
+
+            <div className="button-group" style={{ marginTop: "2rem" }}>
+              <button
+                className="primary"
+                disabled={!licenseKey.trim() || verifyingLicense}
+                onClick={async () => {
+                  setVerifyingLicense(true);
+                  setLicenseError("");
+                  try {
+                    await invoke("verify_and_store_license", { key: licenseKey.trim() });
+                    setLicenseUnlocked(true);
+                    setLicenseStatusError("");
+                    setShowLicenseModal(false);
+                    setVerifyingLicense(false);
+                    await continueToAdvancedSettings();
+                  } catch (e) {
+                    setVerifyingLicense(false);
+                    setLicenseError(String(e));
+                  }
+                }}
+              >
+                {verifyingLicense ? "Verifying..." : "Verify & Continue"}
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setShowLicenseModal(false);
+                  setLicenseError("");
+                }}
+                disabled={verifyingLicense}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

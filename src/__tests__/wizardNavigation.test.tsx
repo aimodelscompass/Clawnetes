@@ -8,6 +8,9 @@ vi.mock("@tauri-apps/api/tauri", () => ({
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
     }
+    if (cmd === "has_saved_license") {
+      return Promise.resolve(false);
+    }
     if (cmd === "get_openclaw_version") {
       return Promise.resolve("1.0.0");
     }
@@ -24,6 +27,7 @@ vi.mock("@tauri-apps/api/dialog", () => ({
 }));
 
 import App from "../App";
+import { invoke } from "@tauri-apps/api/tauri";
 
 async function navigateToConnectBrain() {
   const user = userEvent.setup();
@@ -86,6 +90,14 @@ describe("Wizard Step List", () => {
     });
     fireEvent.click(screen.getByText("Start Setup"));
     expect(screen.getByText("Target Environment")).toBeInTheDocument();
+  });
+
+  it("checks for a saved advanced license on startup", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("has_saved_license");
+    });
   });
 });
 

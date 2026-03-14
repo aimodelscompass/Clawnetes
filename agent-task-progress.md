@@ -1,10 +1,10 @@
 # Progress
 
-- [x] Inspect the failing OpenClaw config and confirm the invalid per-agent `agentToAgent` key.
-- [x] Update task tracking files for the per-agent tool schema fix.
-- [x] Remove unsupported `agentToAgent` from nested agent tool payloads and serializers.
-- [x] Add or update regression tests for valid per-agent tool JSON shape.
-- [x] Run `openclaw config validate`.
+- [x] Inspect the Telegram pairing UI/state mismatch and trace the frontend/backend sources.
+- [x] Update task tracking files for the Telegram pairing panel fix.
+- [x] Add robust Telegram dmPolicy fallback handling in Tauri status checks.
+- [x] Update the React pairing card to render only from actual Telegram linked state.
+- [x] Add regression tests for Telegram policy parsing and pairing UI behavior.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [x] Commit and push changes.
+- [ ] Commit and push changes.
